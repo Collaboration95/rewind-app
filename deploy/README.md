@@ -1,501 +1,215 @@
 # Hosted deployment
 
-The hosted dev host is the Lightsail instance `rewind-demo`. Its Terraform
-stack, scripts, and repository variables keep the historical `demo` name; they
-serve the real-account app, not the synthetic Demo removed on 6 October 2026.
+How the hosted app is packaged, deployed, backed up and recovered. For the
+system map see [current system](../docs/architecture/current-system.md); for the
+database see the [PostgreSQL runbook](../docs/architecture/postgresql-operations.md);
+for release setup see [release cutover](../docs/architecture/release-cutover.md).
 
-**Public hosted URL: [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net).**
-Use this HTTPS address for the hosted app. The HTTP loopback addresses in this
-guide are local origin checks or development endpoints, not alternate public
-URLs.
+Two hosted environments run the real-account app:
 
-The hosted Sprint 2 shape is one non-root Node 22 container on the host. SQLite
-and media are bind-mounted from persistent instance storage;
-the container itself is disposable. Compose defaults expose the static web
-shell and same-origin API proxy on `127.0.0.1:8080`. The hosted
-`rewind.env.example` explicitly sets `REWIND_WEB_BIND_ADDRESS=0.0.0.0` and
-`REWIND_WEB_PORT=80`, publishing the web container on all host IPv4 interfaces
-so the CloudFront HTTPS distribution can reach its HTTP origin on port 80.
-The container listens as non-root on internal port 8080; Compose publishes
-that as host port 80 for the distribution. The Lightsail firewall must allow
-the host port; no host-installed Nginx is needed.
-The Node runtime's host binding remains `127.0.0.1:8787` in both modes, with
-the web container reaching it over the internal Compose network.
+| Environment | Host (Lightsail) | Deploys from                                    | Database                                  |
+| ----------- | ---------------- | ----------------------------------------------- | ----------------------------------------- |
+| dev         | `rewind-demo`    | every merge to `dev` (`deploy-dev.yml`)         | managed PostgreSQL (cut over)             |
+| release     | `rewind-release` | qualified `main` commits (`deploy-release.yml`) | PostgreSQL declared, cutover not complete |
 
-The web container builds the Expo export with
-`EXPO_PUBLIC_LOCAL_BASE_URL=/api`. Requests under `/api/` are proxied to the
-runtime with the prefix removed, while extension-less routes use the SPA
-`index.html` fallback. Unknown API paths remain JSON errors with their original
-status, API responses are `Cache-Control: no-store`, and content-hashed Expo
-assets are immutable.
+The dev host, its Terraform root (`infra/terraform/demo`), scripts and repository
+variables keep the historical `demo` name. They serve the real-account app; the
+synthetic Demo was removed on 6 October 2026. Do not rename them.
+
+Hosted dev is at [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net).
+Loopback addresses in this guide are local origin checks, not public URLs.
+
+## Shape of a host
+
+Two disposable, read-only, non-root containers run under Docker Compose
+(`deploy/compose.yaml`):
+
+- `runtime`: the Node server on `127.0.0.1:8787`. It owns HTTP, the cycle
+  scheduler, media workers and the reminder loop.
+- `web`: nginx serving the Expo web export and proxying `/api/*` to the runtime
+  with the prefix removed. Unknown paths fall back to the SPA `index.html`;
+  API responses are `no-store`; hashed assets are immutable.
+
+Hosted `rewind.env` publishes `web` on host port 80 (`REWIND_WEB_BIND_ADDRESS=0.0.0.0`,
+`REWIND_WEB_PORT=80`) so CloudFront can reach it over HTTP. Without those
+overrides Compose binds `127.0.0.1:8080`. The Lightsail firewall must allow port 80. Data lives outside the containers: PostgreSQL, S3 media, and the persistent
+host mounts below.
 
 ## Persistent mounts and ownership
 
-The compose file maps two host directories below the deployment's persistent
-data root:
+| Host path                 | Container path          | Contents                                                   |
+| ------------------------- | ----------------------- | ---------------------------------------------------------- |
+| `<persistent-root>/data`  | `/var/lib/rewind`       | SQLite files (retained, or live before PostgreSQL cutover) |
+| `<persistent-root>/media` | `/var/lib/rewind/media` | server-owned staging and disk media                        |
 
-| Host path                 | Container path          | Contents                                       |
-| ------------------------- | ----------------------- | ---------------------------------------------- |
-| `<persistent-root>/data`  | `/var/lib/rewind`       | `rewind.sqlite` and SQLite `-wal`/`-shm` files |
-| `<persistent-root>/media` | `/var/lib/rewind/media` | server-owned staging and processed media       |
+The host default root is `/srv/rewind`. `deploy/operator-common.sh` is the
+ownership contract: directories are runtime-owned `0750`, files `0640`, backup
+artifacts `0600`. Backup and recovery check this before reporting success. Never
+point a mount at the checkout or a broad system directory.
+`bash tests/deploy/ownership-contract.test.sh` covers it.
 
-The image runs as a fixed non-root runtime identity, with no root privileges,
-all Linux capabilities dropped, and a read-only container filesystem. The
-runtime owns the persistent data and media trees; the approved backup operator
-does not need those files to be world-readable. Do not put the database or
-media under the repository checkout or point a mount at a broad system
-directory.
+## Host bootstrap
 
-```sh
-PERSISTENT_ROOT=/path/to/persistent-root
-sudo install -d -m 0750 "$PERSISTENT_ROOT/data" "$PERSISTENT_ROOT/media" "$PERSISTENT_ROOT/backups"
-```
+Terraform runs `infra/terraform/demo/cloud-init.sh` on first boot. It installs
+Docker, `jq` and `rsync` and creates `data`, `media` and `backups`. It does not
+mark the host ready: the first deployment (or `infra/scripts/wake-demo.sh`)
+transfers the release bundle and runs the bundled bootstrap with `--complete`.
+That installs the Compose files, operator scripts, the backup service and timer,
+and a `0600` `rewind.env` only when none exists. Re-running it never deletes data
+or overwrites `rewind.env`. Fixture test: `./deploy/tests/host-bootstrap.test.sh`.
 
-`deploy/operator-common.sh` is the executable ownership contract. Every
-persistent directory, including nested media directories, is runtime-owned and
-mode `0750`; every regular SQLite, WAL/SHM, and media file is runtime-owned
-and mode `0640`. Recovery staging and migration transitions verify this
-contract before reporting success. Backup archives and manifests are private
-operator artifacts (`0600`), and media is streamed through the running runtime
-for backup so the host never needs a world-readable copy. The focused fixture
-covers fresh, restored, nested-media, runtime read/write, wrong-mode, and
-wrong-owner cases:
+Run the read-only gate on the host before a backup or recovery:
 
 ```sh
-npm run test:ownership-contract
+cd /srv/rewind && ./deploy/preflight.sh [--json]
 ```
 
-`REWIND_DATA_HOST_DIR`, `REWIND_MEDIA_HOST_DIR`, and
-`REWIND_CONTAINER_NAME` are optional compose overrides used by the disposable
-verification sequence below. The normal host defaults remain the `/srv/rewind`
-paths shown above.
+It checks `config`, `persistent_paths`, `runtime`, `migration`, `backup_tooling`,
+`pause_script` and `backup_timer`, prints no secrets, and changes nothing.
+Fixture test: `bash tests/deploy/host-preflight.test.sh`.
 
-## Host bootstrap bundle
+## Release bundles and deployment
 
-Terraform runs `infra/terraform/demo/cloud-init.sh` in two safe phases. The
-first pass installs the Docker/JQ/rsync prerequisites and creates the persistent
-`data`, `media`, and `backups` directories. It writes only
-`.host-bootstrap-prerequisites`; it cannot claim the host is ready before the
-repository bundle exists.
+A release is a source-bound bundle built by `deploy/release.py`: an archived
+allowlist of deployment files, both Docker images tagged with the commit SHA,
+image IDs and checksums. The host loads those images and never rebuilds the app.
+`deploy/release-host.sh` has these commands: `prepare`, `install`, `promote`,
+`rollback`, `prune` and `configure`.
 
-After Terraform creates the instance, `infra/scripts/wake-demo.sh` transfers
-the reviewed release bundle and private `rewind.env`, verifies its digest on
-the host, and runs the bundled bootstrap with `--complete`. Completion installs
-the compose files, executable operator
-scripts (including `pause-host.sh` and `preflight.sh`), the backup service and timer, and a
-0600 copy of `rewind.env.example` only when no environment file exists. It
-reloads and enables the backup timer, and writes
-`.host-bootstrap-complete` atomically as the final step. Re-running it updates
-bundle files and modes without deleting persistent data or overwriting an
-existing environment file. Any failed prerequisite removes both markers and
-prints the failed action with a retry hint.
+### Automatic deployment
 
-The local fixture test covers the first pass, clean completion, repeat
-completion, persistence and a missing-bundle failure:
+`.github/workflows/deploy-dev.yml` and `deploy-release.yml` do the build and
+install from CI:
+
+1. The commit must have passed its own branch's `Quality checks` push run.
+2. `release.py build` (with `--branch dev` for dev) makes and verifies the bundle.
+3. `release-host.sh install` activates it only after runtime and web health pass.
+   On failure it restores the previous image pair when the schema permits.
+
+Both workflows need the host running; they never power it on or off. They never
+write `rewind.env` by hand: hosted settings come from Terraform through the
+private `_config/` settings object in the media bucket, streamed to `release-host.sh configure`.
+They reach the host over Lightsail's temporary SSH key, opening port 22 to the
+runner only for the run. AWS access is a GitHub OIDC role, not stored keys.
+
+Repository variables: `AWS_DEMO_DEPLOY_ROLE_ARN` (dev; the `deploy_role_arn`
+output of `infra/terraform/demo`), `REWIND_HOSTED_ENV_URI` (dev settings object),
+`AWS_RELEASE_DEPLOY_ROLE_ARN` and
+`REWIND_RELEASE_HOSTED_ENV_URI` (release; outputs of `infra/terraform/release`).
+Optional: `REWIND_DEMO_AWS_REGION`, `REWIND_DEMO_INSTANCE`,
+`REWIND_DEMO_CONFIG_VERSION`, `REWIND_RELEASE_INSTANCE`. Docs-only pushes skip
+deployment.
+
+### Rollback
+
+On the host: `cd /srv/rewind && ./deploy/release-host.sh rollback`. It refuses a
+newer database schema or changed private configuration, and updates the active
+pointer only after health passes. If it refuses, recover through the verified
+procedures below; never force an older image onto a newer database.
+
+### Manual bundle
+
+For an out-of-band deploy, build and verify a bundle on a clean checkout of a
+green commit (needs authenticated `gh` and Docker):
 
 ```sh
-./deploy/tests/host-bootstrap.test.sh
+python3 deploy/release.py build --green-sha "$SHA" --config-version demo-v1 \
+  --branch dev --output /private/path/rewind-$SHA.tar
+python3 deploy/release.py verify /private/path/rewind-$SHA.tar
 ```
 
-## Hosted-runtime preflight
+Copy it with `deploy/release.py` and `deploy/release-host.sh` to the host, compare
+the SHA-256 with the reviewed value, and run `bash release-host.sh install <bundle>`.
+`--branch` defaults to `main`. Use `--config-version release-v1` for release.
 
-Before a backup, pause, or recovery operation, run the read-only hosted gate
-from `/srv/rewind`:
+## Database
 
-```sh
-./deploy/preflight.sh
-./deploy/preflight.sh --json
-```
+Hosted dev runs managed PostgreSQL; `REWIND_DATABASE_URL` selects it, and an empty
+value keeps the SQLite file under `data/`. Create, import, cut over, roll back,
+recover and inspect the database with the **Database operations** workflow
+(`status`, `bootstrap`, `import`, `resume`, `backup`, `rehearse-restore`) as
+described in the [PostgreSQL runbook](../docs/architecture/postgresql-operations.md).
+Browse live dev data with the read-only login:
+`terraform -chdir=infra/terraform/media output -raw database_readonly_url`.
+The `/admin` browser was removed. Locally, open `.local-data/real` with any SQLite
+tool.
 
-The command checks seven stable IDs: `config`, `persistent_paths`, `runtime`,
-`migration`, `backup_tooling`, `pause_script`, and `backup_timer`. Human output
-uses fixed `PASS`/`FAIL` lines; JSON contains only `version`, the overall
-`ok` boolean, and each check's `id`, `ok`, and safe `reason` code. It never
-serializes environment values, credentials, host paths, or backup object names.
-Any failed check returns a non-zero status. The command only reads files,
-Compose state, the runtime `/health` endpoint, and systemd timer state; it
-does not repair the host, start or stop containers, run migrations, create a
-backup, or call AWS.
+Migrations are owned by the server (`server/src/schema.ts`, `server/migrations`) and
+run at start-up. On a SQLite host, `./deploy/migrate-with-backup.sh --confirm`
+uploads a backup, stops the runtime and runs `migrate`, leaving the runtime
+stopped for inspection.
 
-The fixture covers a healthy host plus absent configuration, a missing or
-inactive timer, failed runtime/schema health, and incorrect persistent-data
-ownership:
+## Backup
 
-```sh
-./tests/deploy/host-preflight.test.sh
-```
+`rewind-backup.timer` runs `deploy/backup.sh` nightly. The S3 bucket is private
+and encrypted (SSE-S3); its lifecycle policy controls remote retention.
 
-## Build, migrate, and start
+- **SQLite host** (`REWIND_DATABASE_URL` empty): a `VACUUM INTO` snapshot, a disk
+  media archive and a manifest with SHA-256 checksums and byte counts.
+- **PostgreSQL host:** `backup.sh` calls `backup-postgres.sh`: a `pg_dump` as the
+  read-only role over verified TLS, restored into a throwaway container and
+  row-counted before upload. Managed snapshots and point-in-time restore are the
+  primary recovery path.
 
-For local Compose development, from the repository root:
+`deploy/backup-manifest.sh` validates manifests (key names under
+`REWIND_BACKUP_PREFIX`, sizes, checksums, and a `created_at` no older than seven
+days) before anything is downloaded. The host uses a restricted backup AWS
+identity from `AWS_PROFILE` or Terraform-delivered settings; never put access keys
+in this repository. The `rewind-backup.service`/`.timer` units are installed by
+bootstrap. Test: `bash tests/deploy/backup-manifest.test.sh`.
 
-```sh
-cp deploy/rewind.env.example /srv/rewind/rewind.env
-docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml build
-docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml run --rm runtime migrate
-docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
-curl --fail http://127.0.0.1/
-curl --fail http://127.0.0.1/api/health
-```
+## Restore and host rebuild
 
-Existing private environment files are preserved by bootstrap. To adopt this
-hosted binding, set both web variables above in the host's existing environment
-file and recreate the web service with
-`docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d --no-deps web`.
-The public hosted entry point is
-https://d2m6kz76y4kuvm.cloudfront.net. Verify `/api/health` through that HTTPS
-URL; successful loopback checks alone do not prove origin reachability. The
-`http://127.0.0.1` checks above are local origin checks, not a public app URL.
-Port 80 permits direct HTTP access to the web origin wherever the firewall
-allows it; use the public HTTPS entry point for the hosted app.
+`deploy/restore.sh --confirm <manifest>` restores a SQLite-era recovery point
+(manifest, `.sqlite.gz` and `.media.tar.gz` already in `BACKUP_DIR`). It verifies
+sizes, checksums, gzip and SQLite integrity and unsafe archive paths in private
+staging, then swaps data and media with a rollback directory and requires the
+runtime to become healthy. On any failure it restores the previous files.
+`bash tests/deploy/restore-atomic.test.sh` injects the failures. It applies to a host that
+keeps its database on disk, not to PostgreSQL.
 
-For local Compose use, omit the hosted web overrides or explicitly set
-`REWIND_WEB_BIND_ADDRESS=127.0.0.1` and `REWIND_WEB_PORT=8080`. The disposable
-`npm run test:host-lifecycle` runner always forces loopback and a temporary web
-port, even when its parent shell contains hosted values.
-
-For a local artifact/proxy smoke test that uses a temporary Expo export and
-temporary SQLite directory, with no AWS credentials or external URL:
-
-```sh
-npm run build:web
-npm run test:web-smoke
-```
-
-The smoke suite proves a deep-link shell fallback, same-origin `/api` status
-preservation, JSON API failures, shell/asset cache headers, and loopback-only
-execution. It does not provision or contact cloud infrastructure.
-
-The browser-level proof uses the same local production-shaped boundary. Each
-invocation starts from a fresh temporary SQLite/media tree before opening the
-runtime. The runner executes two independent Playwright runs; it strips cloud credential variables from
-child processes, captures no screenshots/video/traces, and writes only a small
-redacted failure summary when a test fails:
-
-```sh
-npm run test:real-account-e2e
-```
-
-The suite is local-only and does not use real camera media, public endpoints,
-developer data directories, or retained browser/runtime state.
-
-The server owns the migration contract. `migrate` opens the configured
-database, creates any missing migration bookkeeping, applies only the
-versioned migrations that are not marked complete, repairs the known
-interrupted migration shapes. It
-is additive and idempotent as supplied by `server/src/db.ts`; deployment
-scripts do not edit schema files or manufacture migration state. Back up an
-existing database before running it:
-
-```sh
-cd /srv/rewind
-./deploy/migrate-with-backup.sh --confirm
-docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
-```
-
-The guarded workflow requires the runtime to be running for the online
-snapshot, uploads a database-and-media backup, stops the runtime, and only
-then runs `migrate`. It leaves the runtime stopped if migration succeeds or
-fails so an operator can inspect it before starting it again.
-
-## Browsing live data
-
-The admin table browser was removed (#261). Hosted data lives in managed
-PostgreSQL; browse it with any PostgreSQL client (psql, pgAdmin, TablePlus,
-DBeaver) using the read-only login, with TLS required:
-
-```sh
-terraform -chdir=infra/terraform/media output -raw database_readonly_url
-```
-
-See `docs/architecture/postgresql-operations.md` for details. Locally, open
-`.local-data/rewind.sqlite` with any SQLite browser.
-
-## Backup and local restore
-
-`backup.sh` uses SQLite `VACUUM INTO` for a consistent online snapshot,
-archives persistent media separately, writes a manifest containing SHA-256
-checksums and byte counts, uploads all three files with server-side AES256
-encryption, and keeps only the local recovery window. The S3 bucket is
-private; its lifecycle policy is the remote retention control.
-
-The shared `deploy/backup-manifest.sh` validator requires exactly one database
-record and one media record. Their keys must be the generated archive names
-under the configured `REWIND_BACKUP_PREFIX`, with non-negative integer byte
-counts and 64-character SHA-256 checksums. `created_at` must match the UTC
-timestamp in the manifest filename, be a real timestamp, and be no more than
-seven days old by default (override the operator-side `BACKUP_MAX_AGE_SECONDS`
-only when the approved recovery window requires it). A five-minute future
-clock allowance is applied. Invalid JSON, stale timestamps, path traversal,
-cross-prefix keys, filename mismatches, or remote byte metadata mismatches stop
-the workflow before archive download; downloaded files are then checked for
-the recorded bytes and checksums before restore.
-
-The systemd unit files are templates. Install them on the host only after the
-restricted backup AWS identity has been configured:
-
-```sh
-sudo install -m 0644 deploy/rewind-backup.service /etc/systemd/system/
-sudo install -m 0644 deploy/rewind-backup.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now rewind-backup.timer
-```
-
-Do not put AWS access keys in this repository or in `rewind.env`; use the
-dedicated `AWS_PROFILE` credential store on the host. The intended policy is
-limited to listing the backup bucket and writing objects under the
-`rewind-demo/` prefix. Backup and pause workflows refuse missing directories,
-missing Docker/AWS prerequisites, unsafe broad paths, and an absent existing
-database.
-
-To restore, copy the manifest, its matching `.sqlite.gz`, and its matching
-`.media.tar.gz` into the configured local `BACKUP_DIR`. The files must retain
-the names generated by `backup.sh`. Then run:
-
-```sh
-cd /srv/rewind
-./deploy/restore.sh --confirm \
-  /srv/rewind/backups/rewind-<timestamp>.manifest.json
-```
-
-The script does not download from S3 and does not require production
-credentials. It requires the manifest to be directly inside `BACKUP_DIR`,
-requires the archive names to match that manifest, checks byte counts and
-SHA-256 values, checks gzip and SQLite integrity, rejects unsafe media archive
-paths, and extracts into private staging before stopping the runtime or
-changing live data. The host needs the `sqlite3` command for the offline
-integrity gate.
-
-After staged ownership/readability checks pass, the runtime is stopped and the
-previous SQLite files plus the complete media tree are moved into a private
-rollback directory. The staged database and media are then installed, the
-runtime is restarted, and its container health check must become healthy before
-the rollback and staging directories are removed. A checksum, extraction,
-permission, replacement, or readiness failure removes partial output, moves
-the previous files back, stops the failed runtime, and reports whether cleanup
-completed. The successful operation leaves the runtime healthy and leaves no
-temporary restore material.
-
-The disposable failure-injection harness covers corrupt database/media,
-checksum mismatch, extraction failure, ownership failure, readiness failure,
-successful replacement, and the absence of partial media output:
-
-```sh
-npm run test:restore-atomic
-```
-
-## Host rebuild and recovery
-
-Backup-gated hibernation (`destroy-demo.sh`) was retired in #512: the hosted
-dev host now runs continuously, and its data lives in managed PostgreSQL and
-the S3 media bucket rather than on the host. `wake-demo.sh` remains the
-reviewed way to create or rebuild the host. Its `--latest` and `--manifest`
-modes restore SQLite-era recovery points, so they apply only to a host that
-still keeps its database on disk.
-
-Wake is read-only by default. Before it reaches Terraform apply, it verifies
-the configured AWS account identity, the exact Terraform-managed Demo tags and
-instance/static-IP inventory, and the absence of unexpected Rewind resources.
-Invalid flags, partial arguments, identity mismatches, and unsafe inventory
-states stop before SSH, SCP, rsync, or Terraform plan/apply construction.
-
-To recreate the host from the newest backup, keep a private local copy of
-`deploy/rewind.env` in `REWIND_ENV_FILE`, then review and apply:
+`infra/scripts/wake-demo.sh` creates or rebuilds the dev host. Backup-gated
+hibernation (`destroy-demo.sh`) was retired in #512, and the host runs
+continuously. Wake is read-only by default: it checks the AWS account, the
+Terraform-managed instance and static-IP inventory and the absence of unexpected
+Rewind resources before any plan.
 
 ```sh
 export REWIND_ENV_FILE=/private/path/rewind.env
-export RELEASE_BUNDLE=/private/path/rewind-<green-main-sha>.tar
-export RELEASE_BUNDLE_SHA256=<reviewed-sha256-of-bundle>
-./infra/scripts/wake-demo.sh --latest
+export RELEASE_BUNDLE=/private/path/rewind-<sha>.tar
+export RELEASE_BUNDLE_SHA256=<reviewed-sha256>
+./infra/scripts/wake-demo.sh --latest                  # review the plan
 ./infra/scripts/wake-demo.sh --latest --apply --confirm
 ```
 
-Build that bundle once on the green `origin/main` commit with a clean checkout,
-including no untracked files. The `--green-sha` value is the exact commit whose
-required CI checks passed; record the resulting bundle SHA-256 alongside it.
-The build command queries the completed successful `Quality checks` push run
-for that SHA on `main` through `gh`; the operator machine needs authenticated
-GitHub CLI access. A matching SHA supplied on the command line alone cannot
-authorize a build. `--config-version` names the operator-reviewed private configuration contract;
-change it when a release requires an incompatible environment layout. The
-bundle contains a Git-archived deployment allowlist, both Docker images tagged
-and labeled with the same commit SHA, exact image IDs, the configuration
-template revision, and checksums. Build on an operator/CI machine with
-Docker; the host loads those exact images and does not rebuild the app:
+`--latest` and `--manifest s3://.../rewind-<timestamp>.manifest.json` select and
+validate a SQLite-era recovery point before Terraform or any host contact, then
+restore it through `restore.sh` and check `/health`. `--seed` starts from an empty
+database for a first install only; it is not a restore and must not replace an
+existing host. In an incident, `aws lightsail stop-instance --instance-name rewind-demo`
+is the last resort; take a current S3 backup first (a stopped instance still bills).
+
+Tests (all offline): `bash tests/deploy/wake-recovery-selection.test.sh`,
+`bash tests/deploy/lifecycle-guards.test.sh`, `bash tests/deploy/recovery-smoke.test.sh`.
+
+## Local verification
 
 ```sh
-git status --short
-git rev-parse HEAD
-git rev-parse origin/main
-python3 deploy/release.py build --green-sha "$GREEN_MAIN_SHA" \
-  --config-version demo-v1 --output "/private/path/rewind-$GREEN_MAIN_SHA.tar"
-python3 deploy/release.py verify "/private/path/rewind-$GREEN_MAIN_SHA.tar"
-sha256sum "/private/path/rewind-$GREEN_MAIN_SHA.tar"
+npm run build:web && npm run test:web-smoke   # static shell + same-origin /api proxy
+npm run test:real-account-e2e                 # production-shaped browser journeys
+npm run test:host-lifecycle                   # disposable Docker: migrate, restart, persistence
+node --test tests/deploy/host-lifecycle-smoke.test.mjs   # Docker-free contract tests
 ```
 
-`--branch` selects the origin branch whose `Quality checks` push run gates the
-bundle. It defaults to `main`, so the release build is unchanged; the online
-integration deploy uses it as described in
-[Online deployment of the integration branch](#online-deployment-of-the-integration-branch).
+`test:host-lifecycle` uses fresh temporary data and media directories and a unique
+Compose project, forces loopback, always removes its containers and volumes, and
+redacts failure output. It never touches `/srv/rewind`, AWS or a public URL.
+Use `--timeout-seconds 15..900` on a slow Docker engine. The other two commands
+are also local only, with cloud credentials stripped.
 
-Before applying wake, confirm the reviewed PR and green check belong to that
-SHA, verify the full S3 backup, and review any migration against the previous
-image. A new schema version can block rollback to an older image. `wake-demo.sh`
-still requires `--apply --confirm` and the verified recovery point; `--seed`
-remains only for first installation. After deployment, check the host runtime,
-the public HTTPS shell and `/api/health`, and a real-account sign-in. The
-host records the active release only after both runtime and web health pass.
-For a later existing-host upgrade, first compare the bundle SHA-256 with the
-reviewed value, then run `./deploy/release-host.sh install /path/to/bundle.tar`
-on the host. A failed healthy upgrade restores the previous image pair when
-the database schema permits it. The host retains the prior release archive,
-image pair, and private configuration digest for rollback.
-If health or the journey fails, an operator can run the following on the host:
-
-```sh
-cd /srv/rewind
-./deploy/release-host.sh rollback
-```
-
-Rollback refuses a newer database schema or changed private configuration and
-updates the active pointer only after runtime and web health pass. If it refuses,
-restore only through the verified recovery procedure after reviewing data and
-migration compatibility; do not force an older image onto a newer database.
-
-You can select an exact recovery point with
-`--manifest s3://rewind-demo-backups-.../rewind-demo/rewind-<timestamp>.manifest.json`.
-Before Terraform plan or any host connection, the wake script verifies both AWS
-identities, refuses an existing or unexpected Rewind resource, and validates
-the selected manifest and both matching S3 archives. `--latest` scans all manifest-shaped
-objects, rejects malformed, incomplete, cross-prefix, byte-mismatched, and
-checksum-mismatched candidates, and then chooses the greatest validated
-manifest timestamp; S3 listing order and object modification time are not
-trusted. Explicit `--manifest` selections use the same bucket, prefix, name,
-archive-size, and checksum checks. A failed selection performs no Terraform
-plan/apply, SSH, SCP, rsync, or host mutation. The only historical-recovery
-execution form is `--apply --confirm`; the default and `--dry-run` forms stop
-after the reviewed plan.
-
-The wake script then creates the new host, waits for cloud-init, copies the
-digest-checked release bundle, transfers the already-verified recovery point, restores it
-through `restore.sh`, and checks `/health` before reporting success. Run the
-hermetic selection tests with `npm run test:wake-recovery-selection`.
-
-The higher-level recreate-and-restore smoke suite runs the unchanged wake
-orchestrator with local fakes for AWS, Terraform, SSH, SCP, rsync, and Docker.
-It executes the real `deploy/restore.sh` against a disposable fixture host and
-prints a redacted stage transcript covering recovery-point validation, plan,
-apply, transfer, restore, runtime start, and final health. Separate runs inject
-failures at plan, apply, recovery transfer, restore start, and final health;
-each asserts that no later stage runs. It never contacts a network, reads an
-SSH key, uses AWS credentials, or writes Terraform state:
-
-```sh
-npm run test:recovery-smoke
-```
-
-Run it twice when changing recovery orchestration to prove the fixture is
-repeatable on a clean temporary directory. The transcript intentionally uses
-stage labels instead of command arguments, paths, object names, or command
-output so it remains auditable without exposing environment-specific data.
-
-Because this account's former instance was deleted before a complete recovery
-point existed, first installation can use the explicit seed path:
-
-```sh
-./infra/scripts/wake-demo.sh --seed
-./infra/scripts/wake-demo.sh --seed --apply --confirm
-```
-
-Seed mode starts from an empty database and runs migrations; it is not a
-historical restore or a substitute for a verified recovery point. It is the
-explicit first-install exception to the recovery-point guard and must never be
-used to replace an existing host.
-
-The emergency stop script is not a recovery workflow: it remains an
-incident-only last resort when the host cannot be reached. A stopped Lightsail
-instance still incurs its monthly bundle charge.
-
-Run the mocked lifecycle guard suite to exercise wake's confirmation ordering
-and dry-run behavior without AWS credentials or a real host:
-
-```sh
-npm run test:lifecycle-guards
-```
-
-## Repeatable disposable host-lifecycle verification
-
-Run the hermetic host-lifecycle harness from the repository root with Docker
-available:
-
-```sh
-npm run test:host-lifecycle
-```
-
-The command creates fresh temporary `data`, `media`, and Compose environment
-directories, chooses loopback ports, and uses a unique Compose project. It
-builds only the runtime image, runs migration, checks health, writes
-fixture-only data and media sentinels, stops and restarts the runtime, and
-verifies health and that both sentinels survived. It always runs `compose down --volumes
---remove-orphans` and removes the temporary root, including after an assertion
-or timeout failure.
-
-The harness never reads or writes `/srv/rewind`, a checkout data directory, AWS,
-or a public URL. Failure output is limited to redacted Compose status/log
-diagnostics; paths, environment values, invitation codes, and media content
-are not emitted. The default wall-clock bound is five minutes and can be
-adjusted for a slower local Docker engine with
-`--timeout-seconds 15..900`.
-
-The Docker-free contract and redaction tests are:
-
-```sh
-node --test tests/deploy/host-lifecycle-smoke.test.mjs
-```
-
-## Online deployment of the integration branch
-
-Merging to `dev` deploys to the existing hosted Lightsail host from
-`.github/workflows/deploy-dev.yml`. This is the online replacement for the
-operator-machine flow above: instead of building a bundle locally and then
-running `./deploy/release-host.sh install`, the workflow does both from CI.
-
-It reuses the same verified release path, so the guarantees are unchanged:
-
-1. The commit must have passed dev's own `Quality checks` push run.
-2. `deploy/release.py build --branch dev` produces the same source-bound,
-   checksummed bundle.
-3. `deploy/release-host.sh install` activates it only after the runtime and
-   web health checks pass, and restores the previous release when they fail.
-
-Differences from the operator flow:
-
-- The workflow never powers the host on or off. It requires the instance to be
-  `running` and fails with an explicit message otherwise, so powering the
-  host off stays a deliberate operator decision rather than a side effect of
-  a merge.
-- It never writes `/srv/rewind/rewind.env`. The host's private configuration is
-  untouched, so the recorded `release-config-version` and
-  `release-config-digest` must still match. Change the
-  `REWIND_DEMO_CONFIG_VERSION` repository variable only alongside a reviewed
-  private-configuration change.
-- It reaches the host with Lightsail's temporary SSH key, opening port 22 only
-  to the runner's address and closing it again in an `always()` step.
-
-Required repository variable: `AWS_DEMO_DEPLOY_ROLE_ARN`, taken from the
-`deploy_role_arn` output of `infra/terraform/demo`. Optional:
-`REWIND_DEMO_AWS_REGION`, `REWIND_DEMO_INSTANCE`,
-`REWIND_DEMO_CONFIG_VERSION`. No AWS keys are stored in GitHub; the job assumes
-the role with an OIDC token in the `dev` GitHub environment.
-
-The same bundle can still be produced by hand for an out-of-band deploy:
-
-```sh
-python3 deploy/release.py build --green-sha "$(git rev-parse dev)" \
-  --config-version demo-v1 --branch dev --output /private/path/rewind-dev.tar
-```
-
-Then copy it, `deploy/release.py`, and `deploy/release-host.sh` to the host
-and run `bash release-host.sh install /tmp/rewind-dev.tar`. Rollback is
-unchanged: `./deploy/release-host.sh rollback` on the host restores the
-previous image pair when the database schema permits it.
+For a local Compose run, copy `deploy/rewind.env.example` to `rewind.env`, set
+`REWIND_WEB_BIND_ADDRESS=127.0.0.1` and `REWIND_WEB_PORT=8080`, then use
+`docker compose --env-file rewind.env -f deploy/compose.yaml up -d --build` and
+check `http://127.0.0.1:8080/api/health`. For the hosted app, verify
+`/api/health` through the HTTPS URL; loopback checks do not prove origin
+reachability.

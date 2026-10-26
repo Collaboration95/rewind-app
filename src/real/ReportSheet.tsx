@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '../ui/Icon';
-import { Button, Dialog, ErrorText, Glass } from '../ui/primitives';
+import { Button, Dialog, ErrorText } from '../ui/primitives';
 import { FONT, WARM } from '../ui/tokens';
+import { RadioList } from './RadioList';
 
 export const REPORT_REASONS = [
   'Sexual or inappropriate',
@@ -51,26 +52,18 @@ export function ReportSheet({
       title={`Report this ${what}`}
     >
       <ScrollView style={styles.scroll}>
-        <Glass accessibilityLabel="Reason" role="radiogroup" style={styles.reasons}>
-          {REPORT_REASONS.map((item, index) => {
-            const selected = item === reason;
-            return (
-              <Pressable
-                accessibilityRole="radio"
-                accessibilityState={{ checked: selected }}
-                key={item}
-                onPress={() => setReason(item)}
-                style={[styles.option, index > 0 && styles.optionRule]}
-                testID={`report-reason-${index}`}
-              >
-                <View style={[styles.radio, selected && styles.radioOn]}>
-                  {selected ? <View style={styles.radioDot} /> : null}
-                </View>
-                <Text style={styles.optionText}>{item}</Text>
-              </Pressable>
-            );
-          })}
-        </Glass>
+        <RadioList
+          align="center"
+          label="Reason"
+          onChange={setReason}
+          options={REPORT_REASONS.map((item, index) => ({
+            value: item,
+            label: item,
+            testID: `report-reason-${index}`,
+          }))}
+          style={styles.reasons}
+          value={reason}
+        />
         {name ? (
           <Pressable
             accessibilityRole="checkbox"
@@ -104,27 +97,6 @@ const styles = StyleSheet.create({
   sheet: { maxHeight: '86%' },
   scroll: { flexGrow: 0 },
   reasons: { borderRadius: 22, marginBottom: 2, paddingVertical: 4 },
-  option: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 12,
-    minHeight: 44,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  optionRule: { borderTopColor: WARM.line, borderTopWidth: 1 },
-  radio: {
-    alignItems: 'center',
-    borderColor: 'rgba(51, 35, 26, 0.45)',
-    borderRadius: 9,
-    borderWidth: 1.5,
-    height: 18,
-    justifyContent: 'center',
-    width: 18,
-  },
-  radioOn: { borderColor: WARM.accent },
-  radioDot: { backgroundColor: WARM.accent, borderRadius: 5, height: 10, width: 10 },
-  optionText: { color: WARM.ink, flex: 1, fontFamily: FONT.body, fontSize: 14.5, lineHeight: 19.5 },
   check: { alignItems: 'center', alignSelf: 'center', flexDirection: 'row', gap: 8, minHeight: 44 },
   box: {
     alignItems: 'center',

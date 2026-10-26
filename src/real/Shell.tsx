@@ -313,7 +313,7 @@ function Shutter({
       {tip ? (
         <View
           accessibilityLiveRegion="polite"
-          key={tip.id}
+          key={`tip-${tip.id}`}
           pointerEvents="none"
           style={styles.tip}
           {...rw('tip')}
@@ -327,7 +327,7 @@ function Shutter({
         accessibilityRole="button"
         accessibilityState={{ disabled: used || Boolean(pending), busy: Boolean(pending) }}
         aria-disabled={used || undefined}
-        key={nope}
+        key={`shutter-${nope}`}
         onPress={() => {
           if (pending) return;
           if (state.kind === 'used') {

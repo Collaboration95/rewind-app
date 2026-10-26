@@ -635,9 +635,6 @@ export async function probeClipWithFfmpeg(
   }
 }
 
-// Descriptive alias for callers that treat FFmpeg as a generic media adapter.
-export const runFfmpegTransform = processClipWithFfmpeg;
-
 export interface FfmpegProbeResult {
   configured: boolean;
   transformSucceeded: boolean;

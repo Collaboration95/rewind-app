@@ -14,9 +14,8 @@ usage strings through the `expo-camera` config plugin.
 
 The capture UI depends on the framework-independent ports in
 `src/capture/contracts.ts`. `ExpoCameraPlatform` is the production adapter;
-`DemoCameraPlatform` is an explicit fixture adapter for simulator review and
-deterministic tests. The fixture is always labelled as a simulator demo and
-never claims that hardware captured an image.
+tests inject fixture adapters from `tests/mocks/`. (The labelled
+`DemoCameraPlatform` simulator adapter was removed with the synthetic Demo.)
 
 ## Capability and permission boundary
 

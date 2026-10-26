@@ -1,145 +1,56 @@
 # Rewind
 
-Rewind is a local-first SWE5006 prototype for collecting short shared moments
-through a group cycle, then experiencing them together after a delayed reveal.
+Rewind is a SWE5006 group project. A small group collects photos and short
+videos through a cycle. Contributions stay sealed until the reveal, then the
+server builds a film the group watches together. Released films are kept in
+Archive. Members also get group chat and web-push reminders.
 
-The hosted app supports real-account sign-in and is available at:
+- **Clients:** a web app that also runs as an installed iPhone Home Screen PWA.
+  Android has a test APK. Compiled native iOS is out of scope.
+- **Server:** one Node application with ffmpeg media processing.
+- **Hosted:** Amazon Lightsail behind CloudFront, managed PostgreSQL, private S3
+  media and Amazon Cognito sign-in. Merges to `dev` deploy to hosted dev
+  automatically. Release is deployed from `main`.
+- **Local:** SQLite and disk media, with a password "Developer sign-in".
 
-[https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net)
+Hosted dev: [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net)
+(HTTPS is needed for iPhone camera capture, PWA install and web push).
 
-Use that HTTPS address for the hosted app; the local URLs below are only for
-development.
+## Run it locally
 
-## Start the app
-
-Use the Node.js 22 version in `.nvmrc` (22.23.3), npm 10 or newer, an
-available `ffmpeg` executable, and a current Chromium-based browser. With nvm,
-run `nvm use` before `npm ci`; the CI workflow reads the same version file.
+Needs the Node version in `.nvmrc` (run `nvm use`), npm 10 or newer, `ffmpeg`
+and a Chromium-based browser.
 
 ```sh
 npm ci
-npm run check
-make run-real
+make run          # alias of make run-real
 ```
 
-`make run-real` starts the local server with SQLite in `.local-data/real` and
-the Expo web app behind one same-origin proxy. Open
-`http://localhost:8090`, create an account, and sign in. New local groups use
-10-minute cycles so reveal and Archive can be tested. Real sign-in normally
-requires HTTPS; the local exception covers plain HTTP on localhost only, so use
-a browser on the same machine. Press Ctrl-C to stop everything.
+`make run` runs `scripts/run-real-local.mjs`: the server (SQLite in
+`.local-data/real`) and the Expo web app behind one same-origin proxy. Open
+`http://localhost:8090`, create an account and sign in. New groups use
+10-minute cycles so reveal and Archive can be tried quickly. Use a browser on the
+same machine; plain-HTTP sign-in works on localhost only. Press Ctrl-C to stop.
+Use non-sensitive test media only.
 
-## Optional local runtime
-
-The companion Node service adds local SQLite persistence, media processing,
-and the full capsule flow. It is intended for a trusted development machine or
-LAN only; it is not a hosted service. Use non-sensitive test clips only.
-
-`make run` is an alias for `make run-real`. Real sign-in needs HTTPS or
-localhost, so a phone on the LAN cannot sign in to this local backend; use the
-hosted dev URL for iPhone checks. `npm run dev:lan` still starts the runtime and
-Expo in LAN mode (`REWIND_LAN_IP` overrides the chosen interface) for bundling
-checks that do not need an account.
+## Test
 
 ```sh
-npm run server:preflight  # validate SQLite, LAN binding, and FFmpeg
-npm run server:start      # build and run the local service
+npm run test:fast         # unit, server and client tests (the PR gate)
+npm run check             # format, lint, architecture, types, tests, a11y
+npm run test:slow         # web export, routing, PWA, e2e (before a main promotion)
+make test-postgres        # server suite on a disposable PostgreSQL 17
 ```
 
-Point an iOS simulator at localhost, or a physical device at your trusted LAN
-address, before starting Expo:
+Diagnose one file with `npm run test:focused -- server server/tests/<file>.test.mjs`
+(also `frontend` and `root`).
 
-```sh
-EXPO_PUBLIC_LOCAL_BASE_URL=http://127.0.0.1:8787 npm start -- --ios --lan --clear
-```
+## Documentation
 
-If the runtime is unavailable, the app keeps an explicit retryable state rather
-than claiming the service is connected.
-
-Native real-account invite links require `EXPO_PUBLIC_INVITE_WEB_ORIGIN` to be
-set at app-build time to the public HTTPS origin that serves the `/invite`
-route. This is the link destination, separate from
-`EXPO_PUBLIC_LOCAL_BASE_URL`, which points to the API. Web builds use their
-current HTTPS origin automatically; a native build without the public origin
-will explain that invite links are unavailable instead of sharing an API URL.
-
-The HTTP boundary has bounded defaults in both local CLI and Compose runtime
-modes: 30 seconds of request-body idle time, 120 seconds per media upload, two
-concurrent media intakes, and one concurrent media processor. Override them
-with `REWIND_HTTP_IDLE_TIMEOUT_MS`, `REWIND_HTTP_UPLOAD_TIMEOUT_MS`,
-`REWIND_HTTP_MAX_CONCURRENT_INTAKES`, and
-`REWIND_HTTP_MAX_CONCURRENT_PROCESSING` when a trusted runtime needs different
-bounds. JSON bodies remain capped at 64 KiB and staged media at 50 MiB.
-Slow or aborted bodies use a deterministic 408 response when the connection
-is still writable, oversized bodies use 413, and capacity rejections use 429;
-there is no distributed rate limiter.
-
-Media defaults to `REWIND_MEDIA_BACKEND=disk`, preserving the staged intake and
-filesystem rollback. `local` enables immutable private object references under
-the data directory; it requires `REWIND_MEDIA_ENVIRONMENT` (for example, `test`).
-The same configured store is used by HTTP retrieval, clip workers and the cycle
-scheduler. Local stores retain the authenticated staged-upload path.
-
-The opt-in `s3` backend additionally requires `REWIND_MEDIA_S3_BUCKET`,
-`REWIND_MEDIA_S3_OWNER` (12-digit expected owner) and `REWIND_MEDIA_S3_REGION`.
-Optional `REWIND_MEDIA_S3_KMS_KEY_ARN` must be a canonical key ARN. The SDK uses
-its standard credential provider chain; credentials are not application settings.
-Construction sends no cloud requests. Signed PUT intents bind incoming bytes,
-checksum and version; retrieval stays behind the application's authorization
-boundary. A provider environment still needs separately verified private bucket
-versioning, encryption, lifecycle and browser CORS before this mode is usable.
-Local tests do not establish those provider guarantees.
-
-Weekly reminders are opt-in and have no automatic service or timer. Configure
-`REWIND_REMINDER_EXPO_ENABLED=true` (optionally
-`REWIND_REMINDER_EXPO_ACCESS_TOKEN`) and/or the complete
-`REWIND_REMINDER_VAPID_SUBJECT`, `REWIND_REMINDER_VAPID_PUBLIC_KEY`, and
-`REWIND_REMINDER_VAPID_PRIVATE_KEY` set. Provider construction sends no requests;
-an explicit bounded pass runs with:
-
-```sh
-npm run server:build
-node server/dist/cli.js reminders --once --json
-```
-
-An unconfigured pass is a no-op. The API registers a device destination against
-its authenticated real-account session; it never returns the destination or
-provider credentials in status responses. Only enabled, unsnoozed members with
-an active registration session are eligible at Sunday 19:00 in the group's
-timezone, with a 24-hour catch-up limit. Logout, session expiry, membership
-changes, and destination rotation fence queued work. Registrations therefore
-require a current session and must be renewed after session expiry.
-
-One outbox job is created per group/member/local Sunday. Sends retry at most
-three times; Expo tickets are polled separately without resending accepted
-tickets. A crash after provider acceptance can still cause a retry, so provider
-sends are at-least-once. Provider acceptance does not establish phone delivery.
-Web Push currently accepts Apple, Mozilla, and Google push endpoints. Client
-permission/registration, actual provider delivery, and hosted acceptance remain
-separate prerequisites; this command does not provision or schedule a worker.
-
-## Current scope and limits
-
-- Real capture requires a camera; iPhone camera capture needs the hosted HTTPS
-  app.
-- Locally, group media stays on the local runtime. Do not use real or
-  sensitive media.
-- Hosted persistence and recovery are separate from this local quick start;
-  follow the guarded deployment guide before operating the hosted host.
-
-## Checks
-
-```sh
-npm run check             # format, lint, architecture, types, and tests
-npm run test:responsive   # web layout checks at supported viewports
-npm run server:preflight  # local runtime, SQLite, LAN, and FFmpeg readiness
-```
-
-## Further reading
-
-- [Local-first boundary](docs/architecture/ADR-0001-local-first-sprint-0.md)
-- [Camera capture boundary](docs/architecture/ADR-0002-camera-capture-boundary.md)
-- [Domain contracts](docs/domain/contracts.md)
-- [Hosted persistence](docs/architecture/hosted-demo-persistence.md)
-- [Hosted deployment, backup, and recovery](deploy/README.md)
-- [Sprint planning index and canonical dates](doc/README.md)
+- [Documentation index](doc/README.md): product, design, delivery and process.
+- [Current system architecture](docs/architecture/current-system.md)
+- [Delivery and verification](docs/architecture/delivery-and-verification.md)
+- [Learn Rewind](docs/learn/README.md): browser-friendly explainer pages.
+- [Hosted deployment, backup and recovery](deploy/README.md)
+- [Terraform and AWS](infra/terraform/README.md)
+- [Working agreement](AGENTS.md)

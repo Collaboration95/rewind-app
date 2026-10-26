@@ -6,12 +6,11 @@ import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
+const { schemaReadiness } = await import('../dist/db.js');
 const { deleteContribution } = await import('../dist/contributions/index.js');
 const {
   ContributionLedgerQueryError,
   LEDGER_INDEX_NAME,
-  ensureContributionLedgerSchema,
-  contributionLedgerSchemaReady,
   linkContributionReplacement,
   listContributionLedger,
   parseLedgerLimit,
@@ -33,7 +32,6 @@ async function withLedgerDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-ledger-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openFixtureDatabase(config);
-  ensureContributionLedgerSchema(database);
   try {
     return await run({ config, database, dataDir });
   } finally {
@@ -95,14 +93,11 @@ function insertContribution(database, options) {
 }
 
 test(
-  'ledger schema is repaired idempotently and exposes its readiness probe',
+  'the baseline schema carries the ledger replacement column and scope index',
   { skip: sqliteOnly },
   () => {
     return withLedgerDatabase(async ({ database }) => {
-      assert.equal(contributionLedgerSchemaReady(database), true);
-      ensureContributionLedgerSchema(database);
-      ensureContributionLedgerSchema(database);
-      assert.equal(contributionLedgerSchemaReady(database), true);
+      assert.equal(schemaReadiness(database).ready, true);
 
       const columns = database
         .prepare('PRAGMA table_info(contributions)')

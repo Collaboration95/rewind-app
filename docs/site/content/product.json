@@ -1,0 +1,466 @@
+{
+  "title": "Product and use cases",
+  "lede": "Who uses Rewind, the fourteen use cases and how they changed, what is in and out of scope, and the quality attributes we designed for.",
+  "intro": [
+    "The use case numbers UC01 to UC14 come from the report's model packages. Where the older package text disagrees with the current code, this page follows the code and marks the use case as changed."
+  ],
+  "sections": [
+    {
+      "id": "actors",
+      "title": "Actors",
+      "summary": "Three human roles and four systems that act on Rewind.",
+      "tables": [
+        {
+          "columns": ["Actor", "Type", "What they do"],
+          "rows": [
+            [
+              "Group owner",
+              "Human (also a member)",
+              "Creates the group, issues and revokes invites, sets the weekly prompt and time zone, removes a moment in the group. Gets no early view of media."
+            ],
+            [
+              "Member",
+              "Human",
+              "Signs in, switches between groups, captures, corrects once, chats, watches and downloads films, sets reminders, reports or blocks other members."
+            ],
+            [
+              "Invitee",
+              "Human",
+              "A signed-in person who holds an invite code or link and is not yet in the group. Becomes a member by accepting."
+            ],
+            [
+              "Cycle clock / scheduler",
+              "Internal system",
+              "A scan (every second) finds due cycles, closes them, opens the next and queues the film job. A separate loop (every minute) finds due reminders."
+            ],
+            [
+              "Amazon Cognito",
+              "External system",
+              "Managed Login for web and PWA sign-in on release (authorization code with PKCE; the server exchanges the code)."
+            ],
+            [
+              "Web-push service",
+              "External system",
+              "The browser vendor's push endpoint that delivers the Sunday reminder to an installed or open browser."
+            ],
+            [
+              "Object storage (S3)",
+              "External system",
+              "Private media storage on hosted environments. Locally, disk is used."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The platform operator (the team) is a stakeholder rather than an in-app actor: they use health checks, safe logs and the deployment tooling, not an admin screen. The `/admin` page was removed."
+      ],
+      "sources": [
+        {
+          "label": "server/src/cycles/scheduler.ts",
+          "path": "server/src/cycles/scheduler.ts",
+          "note": "Cycle scan interval and limits"
+        },
+        {
+          "label": "server/src/reminders/loop.ts",
+          "path": "server/src/reminders/loop.ts",
+          "note": "Reminder loop, 60 s"
+        },
+        {
+          "label": "server/src/auth/cognito.ts",
+          "path": "server/src/auth/cognito.ts",
+          "note": "Cognito code exchange"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why is the cycle clock an actor?",
+          "a": "It starts use cases (UC07, UC08, the reminder scan) without a human. In UML it is the trigger for those flows. It is an internal scheduler, not a person; the report draws it as an actor on the system boundary for clarity."
+        },
+        {
+          "q": "Does the owner have extra powers over media?",
+          "a": "Only one: remove a moment from the group, which also returns the author's allowance. The owner cannot see sealed media."
+        }
+      ]
+    },
+    {
+      "id": "use-case-list",
+      "title": "Use case list",
+      "summary": "Fourteen use cases in five packages. Two changed after the packages were written; none were removed. Two small additions are not yet modelled.",
+      "tables": [
+        {
+          "columns": ["UC", "Name", "Package / owner", "Status today"],
+          "rows": [
+            [
+              "UC01",
+              "Register, authenticate and manage a session",
+              "Access / A",
+              "**Changed.** Web and PWA use Cognito Managed Login on release. The password form is now called Developer sign-in and exists only on local and dev. The package text says Cognito is a future target; it shipped to dev on 8 October."
+            ],
+            [
+              "UC02",
+              "Create and select a real group",
+              "Access / A",
+              "Current. Group name up to 80 characters; capacity 2 to 10; five group creations per account per day."
+            ],
+            [
+              "UC03",
+              "Issue, revoke and accept an invitation",
+              "Access / A",
+              "Current. Default 24 hours, between 5 minutes and 7 days; ten wrong guesses per 15 minutes are throttled."
+            ],
+            [
+              "UC04",
+              "Record, review, trim and submit video",
+              "Capture / B",
+              "Current. Maximum 15 seconds per clip."
+            ],
+            [
+              "UC05",
+              "Contribute a photo",
+              "Capture / B",
+              "Current. A photo becomes a 3-second film segment."
+            ],
+            [
+              "UC06",
+              "Enforce allowance and one correction",
+              "Capture / B",
+              "Current. Five contributions and 30 seconds per 7-day window; one delete and replace."
+            ],
+            [
+              "UC07",
+              "Automatically close a cycle and open its successor",
+              "Cycle / C",
+              "Current. 28 days by default; a configuration value shortens it for local runs."
+            ],
+            [
+              "UC08",
+              "Compile, retry, publish, premiere and archive a film",
+              "Cycle / C",
+              "Current."
+            ],
+            [
+              "UC09",
+              "Owner prompt and group time zone",
+              "Participation / D",
+              "Current. Prompt up to 160 characters."
+            ],
+            [
+              "UC10",
+              "Reminder preference and asynchronous delivery",
+              "Participation / D",
+              "**Changed.** Web push only. The Expo provider path is paused. A recurring loop now runs in the server; the package says a one-shot command only."
+            ],
+            [
+              "UC11",
+              "Private group chat",
+              "Participation / D",
+              "Current. Messages up to 2,000 characters, one-level replies, one reaction, live updates with reconnect."
+            ],
+            [
+              "UC12",
+              "View the premiere and released Archive",
+              "Archive / C",
+              "Current. Premiere lasts 24 hours from publication."
+            ],
+            ["UC13", "Download own clip or group film", "Archive / C", "Current."],
+            [
+              "UC14",
+              "Install, update and open an invitation across clients",
+              "Archive / C",
+              "Current for web and PWA. Native links and universal-link routing are not verified."
+            ],
+            [
+              "(unmodelled)",
+              "Report or block a member; owner removes a moment; delete own account",
+              "Access / A",
+              "Implemented, not yet in the UC01 to UC14 packages. Mention in the report as additions."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Gone from the product altogether: the synthetic Demo (removed 6 October), the `/admin` page and any native push expansion. None of these was a numbered use case."
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/report/report-draft.md",
+          "path": "doc/planning/report/report-draft.md",
+          "note": "UC01 to UC14 as drafted"
+        },
+        {
+          "label": "doc/planning/report/packages/access/use-cases.md",
+          "path": "doc/planning/report/packages/access/use-cases.md",
+          "note": "UC01 to UC03 flows"
+        },
+        {
+          "label": "server/src/groups/real.ts",
+          "path": "server/src/groups/real.ts",
+          "note": "Group limits"
+        },
+        {
+          "label": "server/src/groups/invites.ts",
+          "path": "server/src/groups/invites.ts",
+          "note": "Invite lifetime and throttle"
+        },
+        {
+          "label": "server/src/chat/index.ts",
+          "path": "server/src/chat/index.ts",
+          "note": "Chat limits"
+        },
+        {
+          "label": "server/src/groups/safety.ts",
+          "path": "server/src/groups/safety.ts",
+          "note": "Report, block, remove"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why fourteen use cases and not more?",
+          "a": "Each one is a goal a user or the clock has, and each has two or more flows. Finer steps (for example 'view chat history') are flows inside a use case, not separate use cases. The course asks for the in-scope cases plus the out-of-scope ones on the diagram."
+        },
+        {
+          "q": "Which use cases are the most complex?",
+          "a": "UC06 (atomic quota with one correction), UC07 and UC08 (clock-driven transition plus a retryable background job), UC12 and UC13 (private media access). These carry the design problems and patterns."
+        },
+        {
+          "q": "Is the package model out of date?",
+          "a": "Partly. UC01 and UC10 changed after it was written. The final report refresh (issue #362) must update those two use cases and add the safety and account-deletion cases."
+        }
+      ]
+    },
+    {
+      "id": "overview",
+      "title": "Use case overview by package",
+      "summary": "The same fourteen use cases grouped by the five packages that own them.",
+      "visuals": [
+        {
+          "type": "hub",
+          "title": "Rewind use cases by package",
+          "center": {
+            "label": "Rewind",
+            "sub": "UC01 to UC14",
+            "detail": "The private group loop: five packages share one server and one client."
+          },
+          "items": [
+            {
+              "label": "Access",
+              "sub": "UC01 to UC03 · Member A",
+              "detail": "Sign-in and session, groups and selection, invitations. Code: server/src/auth, server/src/groups."
+            },
+            {
+              "label": "Capture",
+              "sub": "UC04 to UC06 · Member B",
+              "detail": "Video, photo, allowance and one correction. Code: server/src/contributions, server/src/media, src/capture."
+            },
+            {
+              "label": "Cycle",
+              "sub": "UC07 to UC08 · Member C",
+              "detail": "Rollover and film compilation, retry, publish. Code: server/src/cycles, server/src/jobs, server/src/ffmpeg.ts.",
+              "accent": true
+            },
+            {
+              "label": "Participation",
+              "sub": "UC09 to UC11 · Member D",
+              "detail": "Prompt and time zone, reminders, chat. Code: server/src/reminders, server/src/chat, server/src/realtime."
+            },
+            {
+              "label": "Archive",
+              "sub": "UC12 to UC14 · Member C",
+              "detail": "Premiere and Archive playback, downloads, PWA install and invite links. Code: server/src/archive, src/real, public/."
+            }
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Member C owns both Cycle and Archive because the film is the hand-off between them. See [Who owns what](owners.html) for the use case and design problem each member presents."
+      ],
+      "qa": [
+        {
+          "q": "Show the use case diagram.",
+          "a": "The overall diagram is doc/planning/report/diagrams/use-cases-overall.svg (UC01 to UC14 inside the Rewind boundary, with owner, member, invitee, clock, Cognito and push service outside). Package diagrams refine it."
+        }
+      ]
+    },
+    {
+      "id": "main-flows",
+      "title": "Main flows of the key use cases",
+      "summary": "Four use cases that carry most of the design: invite and join, contribute within the allowance, close the cycle and compile the film, and watch the film.",
+      "paragraphs": [
+        "**UC03 Join a group.** The owner creates an invite; the server stores a short code (six letters or eight letters and digits) with an expiry and a capacity check. The invitee signs in first (a pending invite survives Cognito sign-in), enters the code or opens the link and accepts. The server checks that the invite is unused, unexpired, not revoked, that the group has room and that the person is not already a member, then adds the membership in one transaction. Failures (expired, used, full, duplicate, throttled) never add a member.",
+        "**UC04 to UC06 Contribute.** The member opens capture for the selected group, records a video (up to 15 seconds, with a trim bar) or takes a photo, and picks a retro look. The client asks the server to reserve the contribution: the server checks membership, the open cycle and the remaining allowance of five contributions and 30 seconds in the current 7-day window, and records an expiring upload reservation (15 minutes). On hosted environments the browser then uploads straight to private S3. The server verifies and processes the media in a job. The ledger shows 'queued', 'processing' or 'sealed'. The member may delete one eligible contribution in its original window and submit a replacement. Rejected, failed or retried uploads never use up the allowance twice.",
+        "**UC07 and UC08 Close the cycle and release the film.** The scheduler finds a cycle whose end time has passed, marks it closed, creates the successor cycle and queues a compilation job in one persisted step, so a duplicate tick or a restart replays the same transition instead of repeating it. A worker claims the job, joins the accepted clips in accepted-time order at 720 by 1280, normalises loudness to about -16 LUFS, verifies the output and publishes it. Failures retry with limits. If a cycle has exactly one clip, one eligible clip from the group's archive can be added and labelled. The premiere lasts 24 hours from the actual publication time.",
+        "**UC12 and UC13 Watch and download.** The Archive lists released films, newest first, in pages. To play or download, the client asks the API for a film or clip; the route checks the session, the selected group and the release state, then returns an opaque `/media/access/<token>` link that is valid for two minutes and tied to that session, group, job and purpose. The media route checks the token again, checks file integrity and streams the bytes. An expired token, another session or a member of another group is denied."
+      ],
+      "sources": [
+        { "label": "server/src/groups/invites.ts", "path": "server/src/groups/invites.ts" },
+        {
+          "label": "server/src/contributions/index.ts",
+          "path": "server/src/contributions/index.ts"
+        },
+        {
+          "label": "server/src/media/upload-intents.ts",
+          "path": "server/src/media/upload-intents.ts",
+          "note": "15-minute reservation"
+        },
+        { "label": "server/src/cycles/lifecycle.ts", "path": "server/src/cycles/lifecycle.ts" },
+        { "label": "server/src/jobs/worker.ts", "path": "server/src/jobs/worker.ts" },
+        {
+          "label": "server/src/routes/media-access.ts",
+          "path": "server/src/routes/media-access.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Walk me through what happens when two members upload at the same moment their allowance runs out.",
+          "a": "The reservation is a single atomic database operation against the member's counts and seconds in the window, so one request gets the last slot and the other is refused. That is the core of UC06 and is covered by the contribution policy and ledger tests."
+        },
+        {
+          "q": "What if the server restarts while a film is compiling?",
+          "a": "The job is durable. On restart the stale claim expires and the job is claimed again; output publication is fenced so only the current claim can publish. The transition itself is idempotent."
+        },
+        {
+          "q": "What does a member see for a sealed contribution?",
+          "a": "The kind (photo or video), length, day and a state, plus a Delete button if their one correction is still available. No thumbnail, no player, no path."
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "title": "Functionality in scope and out of scope",
+      "summary": "The scope the report must state, with the decisions that changed it in October.",
+      "tables": [
+        {
+          "title": "In scope",
+          "columns": ["Area", "What is included"],
+          "rows": [
+            [
+              "Identity and groups",
+              "Cognito sign-in (release), Developer sign-in (local and dev), groups of 2 to 10, selecting among groups, invites, account deletion, report and block"
+            ],
+            [
+              "Capture",
+              "Photo and video, four looks (Disposable Flash, CCD, 8mm, VHS), trim, allowance, one correction"
+            ],
+            [
+              "Cycle and film",
+              "Automatic rollover, chronological film, loudness normalisation, retry, 24-hour premiere"
+            ],
+            ["Archive", "Released films, playback, film and own-clip downloads"],
+            [
+              "Participation",
+              "Weekly prompt, time zone, Sunday 19:00 web-push reminder with snooze or off, group chat with replies and one reaction"
+            ],
+            [
+              "Delivery",
+              "Installable PWA, hosted dev with automatic deploys, local runs with SQLite"
+            ]
+          ]
+        },
+        {
+          "title": "Out of scope",
+          "columns": ["Item", "Why"],
+          "rows": [
+            [
+              "Synthetic Demo",
+              "Removed 6 October 2026; the real app is the product. Git tag demo-frozen-20261004 marks the last state."
+            ],
+            ["Compiled native iOS and App Store", "iOS is delivered as the PWA."],
+            ["Expo / native push", "Paused; code left disabled, not extended."],
+            ["Public feed, profiles, followers, ads", "Rewind is private by design."],
+            [
+              "Long-form video, live streaming, licensed music, AI or complex editing",
+              "Not needed for the loop; adds cost and risk."
+            ],
+            ["Chat attachments and read receipts", "Kept simple."],
+            [
+              "Commercial moderation and compliance assurance",
+              "Basic report, block and owner removal only."
+            ],
+            ["Multi-region scale, billing", "Proof of concept on one host."],
+            [
+              "Control of downloaded copies",
+              "Access control cannot govern a file after it is saved."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/current-product-baseline.md",
+          "path": "doc/planning/current-product-baseline.md",
+          "note": "Disposition of each requirement"
+        },
+        { "label": "AGENTS.md", "path": "AGENTS.md", "note": "Product decisions" }
+      ],
+      "qa": [
+        {
+          "q": "What is architected but not implemented?",
+          "a": "Release-environment isolation on managed PostgreSQL with its own Cognito pool is built in Terraform and code, but not complete (#230, #504, #515). We say so rather than present release as live."
+        },
+        {
+          "q": "Why keep both photo and video?",
+          "a": "Photos lower the effort to take part, which is the product's point. A photo is a 3-second segment in the film, so both share the same allowance."
+        }
+      ]
+    },
+    {
+      "id": "quality-attributes",
+      "title": "Quality attributes",
+      "summary": "Five attributes, how the design addresses each, and where the evidence is.",
+      "tables": [
+        {
+          "columns": ["Attribute", "Requirement", "How it is addressed", "Evidence"],
+          "rows": [
+            [
+              "Privacy and security of media",
+              "Only current group members see released media; nobody sees sealed media",
+              "Server-side membership checks on every route; opaque media tokens (two minutes, tied to session, group, job and purpose); metadata-only ledger; private S3 with direct-upload intents; integrity checks before serving; safe 403 denial text; rate limits on sign-in, invites, chat, groups and safety actions",
+              "server/tests/media-capabilities.test.mjs, cross-group-access.test.mjs, media-integrity.test.mjs; CodeQL and Trivy in CI"
+            ],
+            [
+              "Availability and recoverability",
+              "Survive restarts and failed jobs without losing a film",
+              "Durable jobs with retry and fenced publication; idempotent cycle transition; PostgreSQL backups to S3 with a tested restore on hosted environments; health endpoint",
+              "deploy/, durable-worker and cycle-scheduler tests; #508 restore record. Single host, no HA."
+            ],
+            [
+              "Performance",
+              "Non-media requests p95 at most 2 s; a 25-clip film within 10 minutes",
+              "Bounded concurrency for intake, processing and archive; paged lists; caches for identity; media served with a budget",
+              "doc/planning/performance/353-local-measurement.md (local only)"
+            ],
+            [
+              "Usability and accessibility",
+              "Simple loop, readable on a phone, usable with assistive technology",
+              "Three tabs (Home, Chat, Archive); accessibility labels on controls; web accessibility checks in the browser job; PWA install and Home Screen reminders guidance",
+              "npm run test:a11y; tests/responsive/"
+            ],
+            [
+              "Maintainability",
+              "A new developer can change one area safely",
+              "Layered modules with an architecture test; typed boundaries; unit tests with coverage gates; one Quality gate for every PR; small focused PRs",
+              "scripts/check-architecture.mjs; frontend 89.6% statements, server about 86% lines (20 Oct)"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "See [Testing and quality](quality.html) for how each attribute is proved and [CI/CD](cicd.html) for the pipeline."
+      ],
+      "qa": [
+        {
+          "q": "What is your main security risk?",
+          "a": "Private media. We reduce it with short-lived opaque tokens, membership checks, no early access for anyone, and integrity checks. The residual risk is that an authorised member can save and share a downloaded film, which no server control can prevent."
+        },
+        {
+          "q": "How would you scale Rewind?",
+          "a": "Move capability tokens and the realtime hub to shared state (the tokens are in process memory today), run several app instances, and move film compilation to a separate worker pool. The job queue is already durable, so that step is mostly deployment."
+        },
+        {
+          "q": "Which quality attributes drove the architecture?",
+          "a": "Privacy of sealed media and recoverability of the cycle transition. They led to the capability-token design, the durable job queue and the persisted, idempotent transition."
+        }
+      ]
+    }
+  ]
+}
