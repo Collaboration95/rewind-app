@@ -61,6 +61,20 @@ The normal release workflow builds only the exact main revision whose main
 push Quality succeeded. Apply isolated Cognito settings before allowing the
 application deploy: release disables developer password sign-in.
 
+For a single protected activation window, dispatch **Deploy release** on `main`
+with `operation=cutover`. It installs with SQLite authoritative, bootstraps the
+release database, then runs the quiesced final snapshot/import and prints the
+reconciliation receipt as the `release-cutover-receipt` run artifact. The next
+step waits up to 25 minutes with writers stopped. The coordinator downloads
+the artifact with `gh run download`, inspects it and applies the reviewed
+release-only `cutover=true` Terraform plan during that wait. The job streams
+the updated Terraform settings, activates the same bundle through the existing
+receipt guard, checks PostgreSQL status and a verified logical backup, and
+checks release CloudFront HTTPS. Both phases share one environment approval.
+Do not apply cutover before the reconciliation step succeeds. On a timeout,
+inspect maintenance state and explicitly resume SQLite, or run `install` after
+the reviewed apply; no automatic SQLite restart occurs in the wait step.
+
 ## Move retained data without a second writer
 
 The **Database operations** workflow requires an explicit target: dev on `dev`,
