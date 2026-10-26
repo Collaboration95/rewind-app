@@ -46,7 +46,8 @@ full checks. See the [Quality workflow](../.github/workflows/quality.yml) and
 Sprint 0 ends 12 September; Sprint 1 runs 13 to 26 September; Sprint 2 runs
 27 September to 10 October; Sprint 3 runs 11 to 24 October 2026. Current work is
 the open `mvp` issues in the active Sprint milestone; run `make issues` to list
-them. Project boards are not maintained.
+them. After the Sprint end date, use `scripts/issues.sh "Sprint 3"` to select it
+explicitly. Project boards are not maintained.
 
 ## Historical planning
 

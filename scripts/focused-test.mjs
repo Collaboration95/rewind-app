@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 const suitePatterns = {
   frontend: /^tests\/[^/]+\.test\.(?:ts|tsx)$/,
   server: /^server\/tests\/[^/]+\.test\.mjs$/,
-  root: /^tests\/(?:[^/]+\.test\.mjs|deploy\/[^/]+\.test\.(?:mjs|sh)|terraform\/[^/]+\.test\.mjs)$/,
+  root: /^(?:scripts\/[^/]+\.test\.mjs|tests\/(?:[^/]+\.test\.mjs|deploy\/[^/]+\.test\.(?:mjs|sh)|terraform\/[^/]+\.test\.mjs))$/,
 };
 
 export function selectCommands(args, cwd = process.cwd()) {
