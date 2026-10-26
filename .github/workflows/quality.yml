@@ -138,18 +138,23 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install FFmpeg
-        # apt-get can stall on a slow mirror or the runner's dpkg lock until the job
-        # times out, so bound each attempt and retry once.
+        # Ubuntu mirrors have stalled or crawled for minutes (26 Oct); a checksum-verified
+        # static build from GitHub releases installs in seconds. apt stays as the fallback.
         run: |
           command -v ffmpeg >/dev/null && exit 0
-          for attempt in 1 2; do
-            if timeout 90 sudo apt-get -o DPkg::Lock::Timeout=60 -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update -qq &&
-              timeout 180 sudo apt-get -o DPkg::Lock::Timeout=60 -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y -qq ffmpeg; then
-              exit 0
-            fi
-            echo "FFmpeg install attempt $attempt failed or timed out." >&2
-          done
-          exit 1
+          name=ffmpeg-n8.1-latest-linux64-gpl-8.1
+          base=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest
+          cd "$RUNNER_TEMP"
+          if curl -fsSL --retry 3 --max-time 120 -o "$name.tar.xz" "$base/$name.tar.xz" &&
+            curl -fsSL --retry 3 --max-time 30 -o checksums.sha256 "$base/checksums.sha256" &&
+            grep "  $name.tar.xz\$" checksums.sha256 | sha256sum -c - &&
+            tar -xJf "$name.tar.xz"; then
+            echo "$RUNNER_TEMP/$name/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
+          echo 'Static FFmpeg download failed; falling back to apt-get.' >&2
+          timeout 300 sudo apt-get -o DPkg::Lock::Timeout=60 update -qq
+          timeout 420 sudo apt-get -o DPkg::Lock::Timeout=60 install -y -qq ffmpeg
       - name: Run server tests and collect separate coverage
         run: |
           npm run server:build
@@ -272,18 +277,23 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install FFmpeg
-        # apt-get can stall on a slow mirror or the runner's dpkg lock until the job
-        # times out, so bound each attempt and retry once.
+        # Ubuntu mirrors have stalled or crawled for minutes (26 Oct); a checksum-verified
+        # static build from GitHub releases installs in seconds. apt stays as the fallback.
         run: |
           command -v ffmpeg >/dev/null && exit 0
-          for attempt in 1 2; do
-            if timeout 90 sudo apt-get -o DPkg::Lock::Timeout=60 -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update -qq &&
-              timeout 180 sudo apt-get -o DPkg::Lock::Timeout=60 -o Acquire::Retries=3 -o Acquire::http::Timeout=20 install -y -qq ffmpeg; then
-              exit 0
-            fi
-            echo "FFmpeg install attempt $attempt failed or timed out." >&2
-          done
-          exit 1
+          name=ffmpeg-n8.1-latest-linux64-gpl-8.1
+          base=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest
+          cd "$RUNNER_TEMP"
+          if curl -fsSL --retry 3 --max-time 120 -o "$name.tar.xz" "$base/$name.tar.xz" &&
+            curl -fsSL --retry 3 --max-time 30 -o checksums.sha256 "$base/checksums.sha256" &&
+            grep "  $name.tar.xz\$" checksums.sha256 | sha256sum -c - &&
+            tar -xJf "$name.tar.xz"; then
+            echo "$RUNNER_TEMP/$name/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
+          echo 'Static FFmpeg download failed; falling back to apt-get.' >&2
+          timeout 300 sudo apt-get -o DPkg::Lock::Timeout=60 update -qq
+          timeout 420 sudo apt-get -o DPkg::Lock::Timeout=60 install -y -qq ffmpeg
       - name: Run the server suite against PostgreSQL
         env:
           REWIND_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
