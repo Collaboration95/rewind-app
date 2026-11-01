@@ -213,3 +213,13 @@ For a local Compose run, copy `deploy/rewind.env.example` to `rewind.env`, set
 check `http://127.0.0.1:8080/api/health`. For the hosted app, verify
 `/api/health` through the HTTPS URL; loopback checks do not prove origin
 reachability.
+
+The web image enforces CSP on every response. Its build hashes the exact inline
+scripts in the exported HTML. Startup writes the header include to `/tmp`, which
+remains writable with a read-only container root. `connect-src` permits the app,
+local preview blobs and, for S3, only the regional bucket endpoint generated from
+the same `REWIND_MEDIA_S3_BUCKET` and `REWIND_MEDIA_S3_REGION` as the runtime.
+Invalid S3 settings stop web startup. Cognito uses top-level GET redirects;
+service workers and the manifest stay on the app origin. Camera and microphone
+remain permitted for self. Inline styles remain allowed because react-native-web
+inserts style tags and element styles at runtime; this is an accepted CSP risk.

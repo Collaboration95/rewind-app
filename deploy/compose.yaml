@@ -70,6 +70,11 @@ services:
       retries: 3
 
   web:
+    environment:
+      # The same exact bucket/region used by the runtime's signed direct PUT.
+      REWIND_MEDIA_BACKEND: '${REWIND_MEDIA_BACKEND:-disk}'
+      REWIND_MEDIA_S3_BUCKET: '${REWIND_MEDIA_S3_BUCKET:-}'
+      REWIND_MEDIA_S3_REGION: '${REWIND_MEDIA_S3_REGION:-}'
     build:
       context: ..
       dockerfile: deploy/web.Dockerfile

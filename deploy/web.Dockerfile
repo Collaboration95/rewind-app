@@ -14,11 +14,13 @@ COPY assets ./assets
 COPY src ./src
 COPY public ./public
 COPY scripts/stamp-pwa-build.mjs ./scripts/stamp-pwa-build.mjs
+COPY deploy/render-security-headers.mjs deploy/security-headers.conf ./deploy/
 ARG REWIND_DISPLAY_CURRENT_VERSION=false
 ARG REWIND_CURRENT_VERSION=local
 RUN EXPO_PUBLIC_DISPLAY_CURRENT_VERSION="$REWIND_DISPLAY_CURRENT_VERSION" \
     EXPO_PUBLIC_CURRENT_VERSION="$REWIND_CURRENT_VERSION" \
-    EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
+    EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web \
+  && node deploy/render-security-headers.mjs dist deploy/security-headers.conf /app/security-headers.conf
 
 FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2 AS runtime
 
@@ -27,7 +29,8 @@ RUN sed -i -E 's#^pid[[:space:]]+[^;]+;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.c
   && grep -q '^pid /tmp/nginx.pid;' /etc/nginx/nginx.conf
 
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
-COPY deploy/security-headers.conf /etc/nginx/security-headers.conf
+COPY --from=build /app/security-headers.conf /etc/nginx/security-headers.conf
+COPY --chmod=755 deploy/40-security-headers.sh /docker-entrypoint.d/40-security-headers.sh
 COPY --from=build /app/dist /usr/share/nginx/html
 
 USER nginx
