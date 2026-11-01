@@ -141,13 +141,63 @@ data "aws_iam_policy_document" "terraform_apply" {
       "lambda:*",
       "lightsail:*",
       "logs:*",
-      "s3:*",
       "scheduler:*",
       "sts:AssumeRole",
       "tag:*",
     ]
     resources = ["*"]
   }
+
+  # S3 has its own explicit management allowlist. Object access is limited to
+  # Rewind buckets and the configured state bucket, rather than every S3 action.
+  statement {
+    sid    = "ManageRewindBucketsAndState"
+    effect = "Allow"
+    actions = [
+      "s3:CreateBucket",
+      "s3:DeleteBucket",
+      "s3:GetBucketAcl",
+      "s3:GetBucketCORS",
+      "s3:GetBucketLocation",
+      "s3:GetBucketLogging",
+      "s3:GetBucketObjectLockConfiguration",
+      "s3:GetBucketOwnershipControls",
+      "s3:GetBucketPolicy",
+      "s3:GetBucketPublicAccessBlock",
+      "s3:GetBucketRequestPayment",
+      "s3:GetBucketTagging",
+      "s3:GetBucketVersioning",
+      "s3:GetBucketWebsite",
+      "s3:GetEncryptionConfiguration",
+      "s3:GetLifecycleConfiguration",
+      "s3:GetReplicationConfiguration",
+      "s3:ListBucket",
+      "s3:ListBucketVersions",
+      "s3:PutBucketAcl",
+      "s3:PutBucketCORS",
+      "s3:PutBucketLogging",
+      "s3:PutBucketOwnershipControls",
+      "s3:PutBucketPolicy",
+      "s3:DeleteBucketPolicy",
+      "s3:PutBucketPublicAccessBlock",
+      "s3:PutBucketTagging",
+      "s3:PutBucketVersioning",
+      "s3:PutEncryptionConfiguration",
+      "s3:PutLifecycleConfiguration",
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+    ]
+    resources = [
+      "arn:aws:s3:::rewind-*",
+      "arn:aws:s3:::rewind-*/*",
+      "arn:aws:s3:::${var.state_bucket_name}",
+      "arn:aws:s3:::${var.state_bucket_name}/*",
+    ]
+  }
+
 }
 
 resource "aws_iam_role_policy" "terraform_apply" {
