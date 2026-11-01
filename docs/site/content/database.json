@@ -1,0 +1,863 @@
+{
+  "title": "Database design",
+  "lede": "Relational tables hold identity, membership, cycle state and durable processing receipts, while photo/video bytes stay on disk or in private S3.",
+  "intro": [
+    "This dictionary follows server/src/schema.ts, db.ts, the SQLite baseline and PostgreSQL baseline 030 plus migration 031 in the 20 October 2026 refactor checkout. PK means primary key; FK means an enforced foreign key; U means unique. A logical pointer is explicitly not an FK. Timestamps are stored as ISO-8601 text, and IDs are text unless stated otherwise."
+  ],
+  "sections": [
+    {
+      "id": "entity-map",
+      "title": "The entity groups",
+      "summary": "Account authority, shared media actors and cycle processing form the core; reminders and chat attach to the same group context.",
+      "visuals": [
+        {
+          "type": "hub",
+          "title": "Navigate the relational model",
+          "center": {
+            "label": "Private group",
+            "sub": "Membership scopes access",
+            "detail": "groups and real_group_metadata anchor accepted memberships, cycles and group-scoped features.",
+            "accent": true
+          },
+          "items": [
+            {
+              "label": "Identity",
+              "sub": "Accounts, profiles, sessions",
+              "detail": "real_accounts owns real_profiles and real_account_sessions. Triggers mirror real profiles into the shared profiles media/chat actor table."
+            },
+            {
+              "label": "Group authority",
+              "sub": "Members, invites, selection",
+              "detail": "Composite membership/profile keys prevent attaching another account’s profile. A selection references an actual membership."
+            },
+            {
+              "label": "Cycle and quota",
+              "sub": "Boundaries, prompt, allowance",
+              "detail": "cycles owns contributions and per-member quota windows. The prompt is cycles.prompt; there is no separate prompts table."
+            },
+            {
+              "label": "Media pipeline",
+              "sub": "Intents, jobs, film inputs",
+              "detail": "upload_intents reserves an incoming transfer. media_jobs represents clips and films; there are no separate clips or films tables."
+            },
+            {
+              "label": "Participation",
+              "sub": "Chat and reminder outbox",
+              "detail": "messages/reactions persist chat; realtime_events supplies message cursors. reminder_destinations holds web-push subscription JSON."
+            },
+            {
+              "label": "Safety and operations",
+              "sub": "Reports, throttles, audit",
+              "detail": "Reports and blocks support group safety. Audit, migration receipts and PostgreSQL environment binding support operation and integrity."
+            }
+          ],
+          "caption": "This hub groups entities; it does not imply FKs from every table directly to groups. The dictionaries below state the actual keys."
+        }
+      ],
+      "paragraphs": [
+        "The central relationship is `real_accounts → real_profiles → real_group_memberships → real_group_metadata → groups → cycles → contributions`. Shared `profiles` supply the actor IDs used by media and chat. The profile bridge is trigger-maintained, not a profile-to-profile FK.",
+        "A film is a `media_jobs` row with `kind=film` and a cycle FK; a processed contribution uses `kind=clip`. A web-push subscription is a `reminder_destinations` row with `provider=webpush`. The persisted prompt is a cycle column, inherited when the successor is created. See [request traces](architecture.html#upload) for how these records are used."
+      ],
+      "sources": [
+        {
+          "path": "server/migrations/postgres/030-baseline.sql",
+          "label": "server/migrations/postgres/030-baseline.sql"
+        },
+        {
+          "path": "server/migrations/postgres/031-cognito-accounts.sql",
+          "label": "server/migrations/postgres/031-cognito-accounts.sql"
+        },
+        {
+          "path": "server/migrations/sqlite-baseline.sql",
+          "label": "server/migrations/sqlite-baseline.sql"
+        },
+        {
+          "path": "server/src/groups/settings.ts",
+          "label": "server/src/groups/settings.ts"
+        },
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Where are users, films and prompts?",
+          "a": "Users are real_accounts with a real_profiles row after onboarding. Films are media_jobs(kind=film); prompts are cycles.prompt. The conceptual names do not all correspond to separate tables."
+        },
+        {
+          "q": "Why distinguish account ID from member ID?",
+          "a": "Account ID identifies the sign-in identity. The public member ID is a real profile ID, mirrored into profiles for shared media/chat references. Composite keys prevent mixing profiles between accounts."
+        }
+      ]
+    },
+    {
+      "id": "authority",
+      "title": "Accounts and group authority",
+      "summary": "Real-account tables establish identity and membership; shared tables provide the media/group anchors.",
+      "tables": [
+        {
+          "title": "Identity and authority dictionary",
+          "columns": ["Table", "Purpose and key columns", "Keys, relationships and constraints"],
+          "rows": [
+            [
+              "`real_accounts`",
+              "Identity: id, username, normalized_username, display_name, cognito_sub; password_salt/hash and scrypt parameters; created/updated times.",
+              "PK id; U(normalized_username), U(password_salt); partial U(cognito_sub) when non-null. Cognito rows contain unusable random password values, not a Cognito password."
+            ],
+            [
+              "`real_profiles`",
+              "Onboarded public identity: id, account_id, display_name, created_at.",
+              "PK id; account FK → real_accounts ON DELETE CASCADE; U(account_id) and U(account_id,id). At most one profile per account."
+            ],
+            [
+              "`profiles`",
+              "Shared media/chat actor: id, display_name, avatar_label, is_synthetic.",
+              "PK id; is_synthetic is 0/1. Insert/update/delete triggers mirror real_profiles with the same ID and is_synthetic=0. No FK connects the two profile tables."
+            ],
+            [
+              "`groups`",
+              "Shared group: id, name, current_cycle_id.",
+              "PK id. current_cycle_id is nullable text and a logical pointer, with no FK; application reads also match the cycle’s group."
+            ],
+            [
+              "`real_group_metadata`",
+              "Real-group extension: group_id, owner_account_id, max_members, cycle_duration_ms, time_zone, created_at.",
+              "PK/FK group_id → groups CASCADE; owner FK → real_accounts without cascade. max_members is 2–10; duration metadata is fixed at 2,419,200,000 ms (28 days). Local cycle timestamps can use shorter configured runs."
+            ],
+            [
+              "`real_group_memberships`",
+              "Accepted membership: group_id, account_id, profile_id, role, accepted_at.",
+              "PK(group_id,account_id); group FK → real_group_metadata CASCADE; composite FK(account_id,profile_id) → real_profiles(account_id,id) CASCADE. role is owner/member."
+            ],
+            [
+              "`real_account_group_selections`",
+              "Persisted selected group: account_id, group_id.",
+              "PK account_id and account FK CASCADE; composite FK(group_id,account_id) → real_group_memberships CASCADE. One selection per account; the selected group must be one of its memberships."
+            ],
+            [
+              "`real_account_sessions`",
+              "Opaque session receipt: token_hash, account_id, created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at.",
+              "PK token_hash; account FK CASCADE. Stores SHA-256 of the bearer credential. Account/revocation index supports session queries."
+            ],
+            [
+              "`real_group_invites`",
+              "Invitation: id, group_id, owner_account_id, code, status, created/expiry/acceptance times, accepted_by_account_id.",
+              "PK id; U(code); group/issuing-owner FKs CASCADE; accepting-account FK has no cascade. status active/accepted/expired; CHECK expires_at > created_at. Group/time and status/expiry indexes support listing/expiry."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Capacity, exactly one effective owner and authority to change a group are application invariants checked in transactions. The role CHECK alone does not enforce one owner. Real-account endpoints use `real_group_memberships`; the legacy `memberships` table does not grant access."
+      ],
+      "sources": [
+        {
+          "path": "server/migrations/sqlite-baseline.sql",
+          "label": "server/migrations/sqlite-baseline.sql"
+        },
+        {
+          "path": "server/src/groups/real.ts",
+          "label": "server/src/groups/real.ts"
+        },
+        {
+          "path": "server/src/groups/invites.ts",
+          "label": "server/src/groups/invites.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Can a selection point at a group the account never joined?",
+          "a": "The composite selection FK requires a matching membership. HTTP policy additionally checks the signed-in account and accepted/selected group."
+        },
+        {
+          "q": "Does deleting a real profile remove its shared actor?",
+          "a": "Yes, through the profile bridge trigger. Dependent shared media/chat rows then follow their own FK deletion rules."
+        },
+        {
+          "q": "Is the 28-day metadata CHECK the local demo clock?",
+          "a": "No. The product metadata stays at 28 days; make run-real supplies shorter actual cycle boundaries for testing. These are distinct stored values."
+        }
+      ]
+    },
+    {
+      "id": "media-tables",
+      "title": "Cycles, contributions and processing",
+      "summary": "The relational pipeline separates allowance, contribution identity, processing status and release publication.",
+      "tables": [
+        {
+          "title": "Cycle and media dictionary",
+          "columns": ["Table", "Purpose and key columns", "Keys, relationships and constraints"],
+          "rows": [
+            [
+              "`cycles`",
+              "Cycle: id, group_id, prompt, starts_at, ends_at, status, lock_state, max_count/seconds, count/seconds_used, release_status, release_published_at, previous_cycle_id.",
+              "PK id; group FK CASCADE; predecessor FK → cycles SET NULL and partial U(previous_cycle_id), giving at most one successor. release_status is unpublished/published. Aggregate counters are not member allowance authority."
+            ],
+            [
+              "`cycle_control_events`",
+              "Boundary adjustment receipt: id, cycle_id, group_id, actor_member_id, advance_seconds, old/new starts/ends, occurred_at.",
+              "PK id; cycle/group/profile FKs CASCADE; positive advance_seconds; cycle/time/id index. Retained schema does not imply a current public advance endpoint."
+            ],
+            [
+              "`cycle_lifecycle_events`",
+              "Idempotent transition receipt: id, cycle_id, group_id, transition, occurred_at.",
+              "PK id; cycle/group FKs CASCADE; U(cycle_id,transition). CHECK restricts transition to collecting_to_revealing, revealing_to_archived or next_cycle_created."
+            ],
+            [
+              "`contribution_quota_windows`",
+              "Member allowance: id, cycle_id, member_id, window_start/end_at, max_count/seconds, count/seconds_used, deletions_used.",
+              "PK id; cycle/profile FKs CASCADE; U(cycle_id,member_id,window_start_at). max_count 1–5, max_seconds 1–30; usage nonnegative; deletions_used 0–1. The application prevents consuming beyond allowance."
+            ],
+            [
+              "`contributions`",
+              "Submitted moment: id, cycle_id, member_id, media_job_id, duration_seconds, created_at, quota_window_start_at, deleted_at, replaced_by_contribution_id, removed_at/by_account_id.",
+              "PK id; cycle/profile FKs CASCADE; replacement self-FK and moderator-account FK SET NULL. media_job_id and the quota-window start are logical pointers, not FKs. Ledger index orders by cycle/member/time/id."
+            ],
+            [
+              "`upload_intents`",
+              "Direct-transfer hold: id, environment, group/account/profile/cycle IDs, quota_window_start_at, idempotency_hash, request_hash/json, target_json, reserved_seconds, state, pinned_ref, contribution_id, job_id, expiry/cleanup fields.",
+              "PK id; group/account/profile/cycle and optional contribution/job FKs do not cascade. U(environment,group_id,profile_id,idempotency_hash); U(contribution_id), U(job_id). open/pinned/completed/expired states; completion requires both receipt FKs, other states require neither."
+            ],
+            [
+              "`staged_sources`",
+              "Owned staging receipt: source_id, source_uri, idempotency_key_hash, group_id, member_id, source_path, byte_length, status, claim_generation/expiry.",
+              "PK source_id; U(source_uri), U(idempotency_key_hash); group/profile FKs CASCADE. Status pending/staged; generation nonnegative and non-null size positive. Owner/time index."
+            ],
+            [
+              "`media_metadata`",
+              "Verified probe data: source_uri, mime_type, byte_length, duration_seconds, width/height, has_audio, verified_at, media_type.",
+              "PK source_uri; no FKs. Positive dimensions/size; duration >0 and ≤15; has_audio=1; media_type video/photo. Photos use normalised pipeline metadata, not a claim that the original still contained audio."
+            ],
+            [
+              "`media_jobs`",
+              "Queue/output: id, group_id, contribution_id, cycle_id, kind, status, source_uri/path/generation, trims/mode, output_path, output_sha256/bytes/verified_at, progress/counts, claim_generation, attempts/error/times, media_type.",
+              "PK id; group/cycle FKs CASCADE; contribution FK SET NULL. kind clip/film/download; media_type video/photo. Partial U(idempotency_key); partial U(cycle_id) for film jobs. Progress 0–100; counts/generation/attempts nonnegative."
+            ],
+            [
+              "`compilation_job_inputs`",
+              "Frozen film input: job_id, clip_job_id, contribution_id, position.",
+              "PK(job_id,clip_job_id); both job FKs → media_jobs and contribution FK CASCADE; U(job_id,contribution_id); position ≥0. position is indexed with job_id, but is not unique."
+            ],
+            [
+              "`film_segments`",
+              "Stable segment timing: film_job_id, position, contribution_id, start_seconds, duration_seconds.",
+              "PK(film_job_id,position); film-job FK CASCADE; contribution FK SET NULL. Segment timing survives contribution deletion; contribution index supports lookups."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The application normally creates one clip job for a contribution, but `media_jobs.contribution_id` is not unique and `contributions.media_job_id` is not an FK. `media_jobs.source_uri`, `staged_sources.source_uri` and `media_metadata.source_uri` are logical associations. Stating these limits avoids drawing stronger ER relationships than SQL enforces.",
+        "Release publication is separate from job readiness: a verified ready film must also have a published cycle and publication timestamp. Collection rollover creates the successor while the old film can still be processing."
+      ],
+      "sources": [
+        {
+          "path": "server/migrations/postgres/030-baseline.sql",
+          "label": "server/migrations/postgres/030-baseline.sql"
+        },
+        {
+          "path": "server/src/schema.ts",
+          "label": "server/src/schema.ts"
+        },
+        {
+          "path": "server/src/contributions/index.ts",
+          "label": "server/src/contributions/index.ts"
+        },
+        {
+          "path": "server/src/media/upload-intents.ts",
+          "label": "server/src/media/upload-intents.ts"
+        },
+        {
+          "path": "server/src/jobs/queue.ts",
+          "label": "server/src/jobs/queue.ts"
+        },
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why have both contributions and media_jobs?",
+          "a": "A contribution is the member’s submitted moment and allowance record. A job tracks processing attempts, output identity and failure; the two have different lifecycles."
+        },
+        {
+          "q": "Can a ready job be shown before release?",
+          "a": "No. The serving policy also requires the cycle’s published release marker and verified matching output."
+        },
+        {
+          "q": "Are the source URI links foreign keys?",
+          "a": "No. Their association is enforced by application ownership, generation and verification checks. The schema alone does not guarantee those links."
+        }
+      ]
+    },
+    {
+      "id": "participation",
+      "title": "Chat, reminders and safety",
+      "summary": "Durable message cursors and an outbox support reconnect/retry; safety records preserve only the references allowed by deletion policy.",
+      "tables": [
+        {
+          "title": "Participation and safety dictionary",
+          "columns": ["Table", "Purpose and key columns", "Keys, relationships and constraints"],
+          "rows": [
+            [
+              "`messages`",
+              "Chat text: id, group_id, member_id, body, created_at, reply_to_message_id.",
+              "PK id; group/profile FKs CASCADE; reply-to self-FK SET NULL, with reply index. Body length, reply rules and group authority are checked in application code."
+            ],
+            [
+              "`reactions`",
+              "Reaction: id, message_id, member_id, emoji, created_at.",
+              "PK id; message/profile FKs CASCADE; U(message_id,member_id,emoji). Supported emoji policy is an application check."
+            ],
+            [
+              "`realtime_events`",
+              "Ordered message receipt: id, group_id, message_id, event_type, occurred_at.",
+              "Integral identity PK id; U(message_id); group/message FKs CASCADE; CHECK event_type=message. Index(group_id,id) supports replay. Reactions do not use this durable cursor."
+            ],
+            [
+              "`real_group_reminder_preferences`",
+              "Member choice: group_id, account_id, enabled, snoozed_until, updated_at.",
+              "PK(group_id,account_id); composite membership FK CASCADE; enabled 0/1. Preference belongs to a membership, not to a device."
+            ],
+            [
+              "`reminder_destinations`",
+              "Device registration: id, account_id, session_token_hash, device_key, provider, destination_hash/json, generation, enabled, times.",
+              "PK id; account/session FKs CASCADE; U(account_id,device_key), U(provider,destination_hash); generation >0; enabled 0/1. Web-push subscription endpoint/keys live in destination_json. Schema retains expo compatibility."
+            ],
+            [
+              "`reminder_outbox`",
+              "Weekly send: id, group_id, account_id, local_sunday, scheduled_at, destination_id/generation, state, attempts/receipt_attempts, provider_receipt, next_attempt_at, lease_id/expiry, times.",
+              "PK id; composite membership FK CASCADE; destination FK SET NULL; U(group_id,account_id,local_sunday). Attempts 0–3; lease ID/expiry must both be present or absent. State/due-time index supports workers."
+            ],
+            [
+              "`account_blocks`",
+              "Viewer block: blocker_account_id, blocked_account_id, created_at.",
+              "PK(blocker_account_id,blocked_account_id); both account FKs CASCADE; self-block forbidden. Reverse blocked-account index."
+            ],
+            [
+              "`content_reports`",
+              "Content complaint: id, reporter_account_id, group_id, message_id, contribution_id, reason, created_at.",
+              "PK id; reporter FK CASCADE; group/message/contribution FKs SET NULL. U(reporter,message), U(reporter,contribution); reason ≤500 chars; message and contribution cannot both be non-null. Both may become null."
+            ],
+            [
+              "`member_reports`",
+              "Member complaint: id, reporter_account_id, group_id, reported_account_id, reason, created_at.",
+              "PK id; reporter FK CASCADE; group/reported-account FKs SET NULL. U(reporter,group,reported_account); no self-report; reason ≤500 chars."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The destination’s account FK and session FK independently prove existence, not that the session belongs to that account. Registration checks that association in code. Outbox generation checks stop an old job from using a replaced destination. The current product enables web push only.",
+        "Persistent message events support reconnect replay. Live SSE subscriptions and reaction revision counters are process-local; durable reactions are refreshed through snapshots after reconnect. See [chat architecture](architecture.html#chat)."
+      ],
+      "sources": [
+        {
+          "path": "server/migrations/sqlite-baseline.sql",
+          "label": "server/migrations/sqlite-baseline.sql"
+        },
+        {
+          "path": "server/src/chat/index.ts",
+          "label": "server/src/chat/index.ts"
+        },
+        {
+          "path": "server/src/reminders/outbox.ts",
+          "label": "server/src/reminders/outbox.ts"
+        },
+        {
+          "path": "server/src/groups/safety.ts",
+          "label": "server/src/groups/safety.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why have preferences and destinations separately?",
+          "a": "Preferences express the member’s choice for a group. Destinations represent device/session delivery registrations, which can change independently."
+        },
+        {
+          "q": "Does the outbox guarantee exactly one visible notification?",
+          "a": "It deduplicates the member’s weekly scheduled send and bounds retries. Provider/network/device behaviour still prevents a claim of exactly one visible notification."
+        },
+        {
+          "q": "Why SET NULL on report targets?",
+          "a": "A report can remain when its target is deleted. Reporter deletion cascades, while target references can become null rather than blocking cleanup."
+        }
+      ]
+    },
+    {
+      "id": "supporting",
+      "title": "Audit, throttles, migration receipts and legacy tables",
+      "summary": "Operational tables are distinct from product authority; retained Demo schema does not imply retained Demo endpoints.",
+      "tables": [
+        {
+          "title": "Supporting dictionary",
+          "columns": ["Table", "Purpose and key columns", "Keys, relationships and constraints"],
+          "rows": [
+            [
+              "`audit_events`",
+              "Bounded event: id, event_type, actor_member_id, resource_id, occurred_at, result.",
+              "PK id; actor profile FK SET NULL; resource_id is logical. CHECK restricts session/job/integrity/repair event types and success/failure/denied results. Time/id and resource indexes. The actor is the signed-in member’s profile id for real-account actions, and null for system or scheduler actions. Sanitisation limits stored identifiers."
+            ],
+            [
+              "`auth_login_throttles`",
+              "Persistent login defence: scope, subject_hash, failures, window_started_at, cooldown_until/level, updated_at.",
+              "PK(scope,subject_hash); scope account/source; nonnegative counters. No account FK: hashed throttle keys also cover unknown account names/sources."
+            ],
+            [
+              "`real_invite_guess_throttles`",
+              "Invite-code guessing defence: scope, subject_hash, attempts, window_started_at, updated_at.",
+              "PK(scope,subject_hash); scope account/source; attempts ≥0; window index. No account FK."
+            ],
+            [
+              "`schema_migrations`",
+              "Applied version receipt: version, applied_at.",
+              "Integral PK version. On PostgreSQL baseline installation, versions 1–30 are recorded, then 031 is applied."
+            ],
+            [
+              "`schema_migration_markers`",
+              "Durable migration identity: migration_key, applied_at.",
+              "PK migration_key. Used alongside version receipts so historical filename/version collisions do not confuse upgrades."
+            ],
+            [
+              "`rewind_database_environment`",
+              "PostgreSQL-only binding: singleton, environment, bound_at.",
+              "Boolean PK singleton constrained true. First use binds one environment; startup rejects a mismatched runtime. Excluded from SQLite parity comparison."
+            ],
+            [
+              "`memberships`",
+              "Legacy membership: group_id, member_id, role, accepted_at.",
+              "PK(group_id,member_id); group/profile FKs CASCADE. Retained compatibility; real-account authority comes from real_group_memberships."
+            ],
+            [
+              "`invites`",
+              "Legacy invite: id, group_id, invitee_member_id, status, created_at, code, expires_at, used_at.",
+              "PK id; group FK CASCADE; invitee profile FK SET NULL; partial U(code) when non-null. Real routes use real_group_invites."
+            ],
+            [
+              "`sessions`",
+              "Legacy session: id, member_id, group_id, started_at, last_seen_at, access_kind, expires_at, invalidated_at.",
+              "PK id; profile/group FKs CASCADE; access_kind constrained to demo. Real routes use hashed real_account_sessions instead."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The synthetic Demo was removed on 6 October ([design decision](decisions.html#demo)). This dictionary includes retained tables because it describes the current schema, not only screens visible to users. Audit is also deliberately narrow: it is not a complete historical record of every membership or chat action."
+      ],
+      "sources": [
+        {
+          "path": "server/migrations/postgres/030-baseline.sql",
+          "label": "server/migrations/postgres/030-baseline.sql"
+        },
+        {
+          "path": "server/src/audit/index.ts",
+          "label": "server/src/audit/index.ts"
+        },
+        {
+          "path": "server/src/auth/index.ts",
+          "label": "server/src/auth/index.ts"
+        },
+        {
+          "path": "server/src/groups/invites.ts",
+          "label": "server/src/groups/invites.ts"
+        },
+        {
+          "path": "server/src/postgres/runtime.ts",
+          "label": "server/src/postgres/runtime.ts"
+        },
+        {
+          "path": "AGENTS.md",
+          "label": "AGENTS.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why keep migration keys as well as numbers?",
+          "a": "Earlier branches reused numeric slots and filenames. Stable keys identify the intended change and are still recorded in the receipt tables, even though the SQL files were squashed into one baseline."
+        },
+        {
+          "q": "Do legacy sessions let someone enter a real group?",
+          "a": "No. Real endpoints resolve real_account_sessions and real_group_memberships. A retained legacy row is not an application credential for those routes."
+        }
+      ]
+    },
+    {
+      "id": "integrity",
+      "title": "Constraints, indexes and transaction boundaries",
+      "summary": "SQL protects identity and receipt uniqueness; application transactions enforce time, authority and cross-table policy.",
+      "tables": [
+        {
+          "title": "Important access paths and fences",
+          "columns": ["Rule or lookup", "Database mechanism", "Application responsibility"],
+          "rows": [
+            [
+              "Profile ownership / selection",
+              "Composite profile and membership FKs.",
+              "Resolve the signed-in account and current accepted/selected membership."
+            ],
+            [
+              "At most one film / successor",
+              "Partial unique film cycle and predecessor indexes.",
+              "Match group, lifecycle and publication eligibility."
+            ],
+            [
+              "At most one registered intent result",
+              "Intent idempotency U key; unique job/contribution receipts; completed-state CHECK.",
+              "Pin and verify bytes, recheck policy, then consume allowance and record receipts in one writer transaction."
+            ],
+            [
+              "Member ledger",
+              "contributions_ledger_member_idx(cycle_id,member_id,created_at,id); active-cycle index.",
+              "Bound page size and validate cursor; exclude/refine tombstones and removals as appropriate."
+            ],
+            [
+              "Work queue",
+              "media_jobs queue indexes by group, optional kind/status, created_at and id; source-binding index.",
+              "Claim by generation/lease and refuse stale completion."
+            ],
+            [
+              "Chat resume",
+              "realtime_events_group_idx(group_id,id); U(message_id).",
+              "Filter by group/viewer and resume only permitted events."
+            ],
+            [
+              "Reminder scheduling",
+              "reminder_outbox_due_idx(state,next_attempt_at,id); unique weekly key.",
+              "Validate current destination generation, session, preference, snooze and membership before sending."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Allowance windows are seven days from the cycle start. Each member has up to five contributions and 30 seconds per window; one clip is at most 15 seconds and a photo consumes one slot and three seconds. Smaller configured limits apply. SQL bounds maxima and nonnegative counters, while transactional code checks eligibility and remaining allowance.",
+        "Unexpired open/pinned intents hold allowance without incrementing consumed counters. Completion rechecks the exact object and current window, excludes its own hold, and atomically writes quota consumption, contribution, job and completed receipt. Expiring an unfinished intent releases a hold without refunding a consumed counter.",
+        "Not every relationship is a foreign key: groups.current_cycle_id, contributions.media_job_id, source URI joins and quota-window start pointers remain logical. SQL also does not enforce one owner, capacity or matching group IDs across every related row. PostgreSQL FKs are DEFERRABLE, initially immediate; SQLite enables foreign_keys and WAL when opening the database."
+      ],
+      "sources": [
+        {
+          "path": "server/migrations/postgres/030-baseline.sql",
+          "label": "server/migrations/postgres/030-baseline.sql"
+        },
+        {
+          "path": "server/src/db.ts",
+          "label": "server/src/db.ts"
+        },
+        {
+          "path": "server/src/contributions/index.ts",
+          "label": "server/src/contributions/index.ts"
+        },
+        {
+          "path": "server/src/media/upload-intents.ts",
+          "label": "server/src/media/upload-intents.ts"
+        },
+        {
+          "path": "server/src/jobs/queue.ts",
+          "label": "server/src/jobs/queue.ts"
+        },
+        {
+          "path": "server/src/chat/index.ts",
+          "label": "server/src/chat/index.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Can constraints alone implement quota?",
+          "a": "No. Eligibility depends on time, consumed usage, active reservations, replacement rules and authority. A writer transaction checks those together."
+        },
+        {
+          "q": "Does an index prove the request is fast enough?",
+          "a": "No. It supports a known lookup/order. Performance still depends on data size, SQL round trips and measurements; this page does not invent a throughput guarantee."
+        },
+        {
+          "q": "Why store output hashes in SQL?",
+          "a": "They bind a successful processing receipt to exact external bytes. Serving checks the recorded digest/size rather than trusting a path or status alone."
+        }
+      ]
+    },
+    {
+      "id": "migrations",
+      "title": "Migrations: the current state",
+      "summary": "SQLite runs one baseline file on a fresh database; PostgreSQL uses baseline 030 and migration 031.",
+      "tables": [
+        {
+          "columns": ["Engine", "Startup application", "Readiness and safety"],
+          "rows": [
+            [
+              "SQLite",
+              "schema.ts keeps a receipt list of versions 1–31 with stable keys. A fresh database runs `server/migrations/sqlite-baseline.sql` once and records every receipt. A database already at version 31 opens unchanged.",
+              "An older, partial or damaged database is refused with an instruction to upgrade it first with a release from before the squash (git tag `pre-migration-squash`). The old step-by-step repair code is gone."
+            ],
+            [
+              "PostgreSQL",
+              "postgres/runtime.ts installs 030-baseline.sql for the schema through SQLite migration 30, then applies 031-cognito-accounts.sql. Baseline records both version and key receipts for 1–30.",
+              "Migration transaction uses the shared writer lock. Every SQLite version above 30 must have a matching PostgreSQL file; startup refuses a missing counterpart. Environment binding is checked after migration."
+            ],
+            [
+              "Both",
+              "031 adds nullable cognito_sub and a partial unique index; no destructive account rebuild is required.",
+              "schemaReadiness checks expected versions/keys, and reports a dropped baseline table, index or trigger as `baseline:<name>`; HTTP health reports readiness. A receipt alone is not a live provider/deployment acceptance result."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "In this checkout SQLite has one SQL file, `sqlite-baseline.sql`, and 31 receipt entries in schema.ts, plus two PostgreSQL SQL files. The receipts keep their stable keys so PostgreSQL parity and health checks still line up.",
+        "**Squash done:** the 31 SQLite migration files were squashed into the baseline. The git tag `pre-migration-squash` marks the last release that can upgrade an older SQLite database.",
+        "**Why the squash is safe.** `server/tests/migration-baseline.test.mjs` builds a database from the baseline and compares its tables, indexes and triggers with `server/tests/fixtures/sqlite-schema-v31.json`, a snapshot of the schema the old 31-step chain produced. Any drift fails the test. Version-31 databases open unchanged; older ones are refused with instructions rather than repaired. PostgreSQL keeps baseline 030 plus 031 because they are already applied on hosted dev. See [decision 10](decisions.html#migration-squash)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/schema.ts",
+          "label": "server/src/schema.ts"
+        },
+        {
+          "path": "server/src/db.ts",
+          "label": "server/src/db.ts"
+        },
+        {
+          "path": "server/src/postgres/runtime.ts",
+          "label": "server/src/postgres/runtime.ts"
+        },
+        {
+          "path": "server/migrations",
+          "label": "server/migrations"
+        },
+        {
+          "path": "server/migrations/postgres/030-baseline.sql",
+          "label": "server/migrations/postgres/030-baseline.sql"
+        },
+        {
+          "path": "server/migrations/postgres/031-cognito-accounts.sql",
+          "label": "server/migrations/postgres/031-cognito-accounts.sql"
+        },
+        {
+          "label": "server/tests/migration-baseline.test.mjs",
+          "path": "server/tests/migration-baseline.test.mjs"
+        },
+        {
+          "label": "server/tests/fixtures/sqlite-schema-v31.json",
+          "path": "server/tests/fixtures/sqlite-schema-v31.json"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Are there 31 PostgreSQL SQL files too?",
+          "a": "No. PostgreSQL baseline 030 represents the first 30 SQLite changes; 031 adds Cognito. There are two PostgreSQL SQL files now."
+        },
+        {
+          "q": "Has SQLite migration history already been squashed?",
+          "a": "Yes. The 31 SQLite files are now `sqlite-baseline.sql`. schema.ts keeps the 31 receipts. A fresh database runs the baseline; a database at version 31 opens unchanged; any older or damaged database is refused until upgraded with a release from before the squash (tag `pre-migration-squash`)."
+        },
+        {
+          "q": "How does a concurrent server and worker avoid migrating twice?",
+          "a": "SQLite acquires a writer transaction and rechecks receipt state. PostgreSQL runs migration under the shared advisory writer lock. Both commit receipts with the schema change."
+        }
+      ]
+    },
+    {
+      "id": "adapters",
+      "title": "Two engines, one tested persistence surface",
+      "summary": "The database selector changes the engine while the application keeps prepare/run/get/all/exec calls.",
+      "paragraphs": [
+        "With no REWIND_DATABASE_URL, db.ts opens node:sqlite using busy timeout, foreign keys and WAL. Hosted configuration selects PostgreSQL 17. PostgresDatabase sends SQL to a worker thread holding a pg client, then waits synchronously. The translator maps the supported SQL subset and the bridge maps row/error/transaction behaviour.",
+        "Every write uses an advisory writer fence to preserve the SQLite concurrency model. Statement savepoints keep a failed statement from poisoning its containing PostgreSQL transaction. Text uses byte-order collation; fractional duration/usage columns use DOUBLE PRECISION and integral columns use BIGINT. This is a compatibility choice, not a claim of using PostgreSQL’s full row-level concurrency.",
+        "A remote hosted connection verifies TLS with the bundled RDS CA and persists dev/release binding. The checked-in dev setting enables PostgreSQL cutover; release provisioning is enabled but cutover is false. [#504](https://github.com/Collaboration95/rewind-app/issues/504) remains the release persistence task. See [the database decision](decisions.html#database)."
+      ],
+      "tables": [
+        {
+          "title": "How parity is exercised",
+          "columns": ["Command or job", "What it verifies"],
+          "rows": [
+            [
+              "`npm run server:test` / default fast suite",
+              "Normal server behaviour against SQLite, including the baseline and the refusal of old databases."
+            ],
+            [
+              "`make test-postgres`",
+              "Starts/reuses a disposable local PostgreSQL 17 container, then runs server:test:postgres."
+            ],
+            [
+              "`scripts/run-server-tests-postgres.mjs`",
+              "Creates a temporary database, sets REWIND_TEST_DATABASE_URL, runs the server suite, and drops the database in cleanup. SQLite file identities map to isolated PostgreSQL schemas."
+            ],
+            [
+              "CI: `Server tests on PostgreSQL`",
+              "quality.yml runs the suite against a pinned PostgreSQL 17 service with FFmpeg; aggregate Quality requires this job for non-docs changes."
+            ],
+            [
+              "`server/tests/postgres.test.mjs`",
+              "Compares column/nullability shape and named indexes against migrated SQLite; checks transactions, errors, environment binding, exact import and roles. SQLite internals stay engine-specific."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "server/src/db.ts",
+          "label": "server/src/db.ts"
+        },
+        {
+          "path": "server/src/postgres/database.ts",
+          "label": "server/src/postgres/database.ts"
+        },
+        {
+          "path": "server/src/postgres/translate.ts",
+          "label": "server/src/postgres/translate.ts"
+        },
+        {
+          "path": "server/src/postgres/sync-worker.ts",
+          "label": "server/src/postgres/sync-worker.ts"
+        },
+        {
+          "path": "server/src/postgres/runtime.ts",
+          "label": "server/src/postgres/runtime.ts"
+        },
+        {
+          "path": "server/tests/postgres.test.mjs",
+          "label": "server/tests/postgres.test.mjs"
+        },
+        {
+          "path": "scripts/run-server-tests-postgres.mjs",
+          "label": "scripts/run-server-tests-postgres.mjs"
+        },
+        {
+          "path": "Makefile",
+          "label": "Makefile"
+        },
+        {
+          "path": ".github/workflows/quality.yml",
+          "label": ".github/workflows/quality.yml"
+        },
+        {
+          "path": "infra/terraform/media/database.tf",
+          "label": "infra/terraform/media/database.tf"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Do these pages claim a fresh full server test run?",
+          "a": "No. This task verifies the content build and page rendering. The test commands and CI paths describe the repository’s existing engine verification strategy."
+        },
+        {
+          "q": "Why not rewrite everything to async pg?",
+          "a": "The adapter preserved existing transaction semantics and reduced migration scope. It blocks the event loop and serialises writers, so an async redesign remains a possible response to measured contention."
+        },
+        {
+          "q": "How can the same test open several databases?",
+          "a": "The PostgreSQL test runtime hashes each intended SQLite file path into a separate schema within the temporary test database. Reopening the same path reaches the same schema."
+        }
+      ]
+    },
+    {
+      "id": "lifecycle",
+      "title": "Data lifecycle, media keys and deletion",
+      "summary": "Metadata cleanup and external byte cleanup are separate operations; group films can outlive an individual contribution.",
+      "tables": [
+        {
+          "columns": ["Operation", "Current behaviour"],
+          "rows": [
+            [
+              "Author correction",
+              "An eligible current-window contribution is tombstoned; its clip job is deleted and source/output references cleared. Count/seconds are restored once and deletions_used increments. A processing job or old-window clip cannot refund the current allowance."
+            ],
+            [
+              "Owner moderation",
+              "removed_at/by_account_id records removal. It does not refund allowance or consume the author’s correction. Compilation excludes removed/deleted inputs; segment metadata supports playback handling without claiming already compiled bytes were erased."
+            ],
+            [
+              "Switch group / leave",
+              "Selecting another group changes context and read eligibility; it does not delete membership or content. There is no standalone leave-group route in the inspected real-routes table. Do not promise automatic deletion on leaving."
+            ],
+            [
+              "Delete account",
+              "Owned groups transfer to the longest-standing other member, or a sole-member group is deleted. Own clip jobs are marked deleted and cleared; upload-intent and invite-acceptor references are handled before account deletion. Cascades remove profile-linked contributions/chat, memberships, sessions and related records."
+            ],
+            [
+              "Retain group film",
+              "Existing compiled group films remain. Segment timing is frozen before contribution removal; nullable contribution FKs preserve timing after deletion. Database commit is followed by best-effort byte cleanup."
+            ],
+            [
+              "Local retention",
+              "Bounded cleanup considers unreferenced processed local files at least 24 hours old, with reference/inode checks. It is not a 24-hour Archive expiry policy. Incoming/intents have separate expiry-aware cleanup."
+            ],
+            [
+              "Declared S3 lifecycle",
+              "Terraform expires incoming-tagged objects after 7 days, noncurrent versions after 30 days and unfinished multipart uploads after 1 day. Current processed/film objects are not given a blanket expiry. This describes configuration, not a live bucket inspection."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Media keys are `environment/groupId/prefix/name`, with prefixes incoming, processed or films and a fresh object name for each stored object. Encoded references include backend/store, environment/group, key, exact versionId, SHA-256, byte length, content type and incoming expiry. The adapter authorises scope independently of the reference and deletes an exact version.",
+        "Deleting a membership row would cascade its selection, reminder preference and outbox references. Contributions and messages point to shared profiles/cycles/groups, so a membership deletion FK alone would not erase those rows. The current account-deletion workflow is the implemented removal path, not an invented leave-group workflow.",
+        "SQL stores receipts and references, not media payloads. A database backup cannot replace an S3/media backup, and a successful metadata transaction cannot prove bytes exist. Publication and serving verify output integrity. Terraform enables S3 versioning, blocked public access and SSE-S3; PostgreSQL import/export tools reconcile counts and table content before accepting a transfer."
+      ],
+      "sources": [
+        {
+          "path": "server/src/contributions/index.ts",
+          "label": "server/src/contributions/index.ts"
+        },
+        {
+          "path": "server/src/groups/safety.ts",
+          "label": "server/src/groups/safety.ts"
+        },
+        {
+          "path": "server/src/auth/deletion.ts",
+          "label": "server/src/auth/deletion.ts"
+        },
+        {
+          "path": "server/src/routes/real-routes.ts",
+          "label": "server/src/routes/real-routes.ts"
+        },
+        {
+          "path": "server/src/jobs/retention.ts",
+          "label": "server/src/jobs/retention.ts"
+        },
+        {
+          "path": "server/src/media/upload-intents.ts",
+          "label": "server/src/media/upload-intents.ts"
+        },
+        {
+          "path": "server/src/media/store.ts",
+          "label": "server/src/media/store.ts"
+        },
+        {
+          "path": "server/src/media/s3-store.ts",
+          "label": "server/src/media/s3-store.ts"
+        },
+        {
+          "path": "infra/terraform/media/main.tf",
+          "label": "infra/terraform/media/main.tf"
+        },
+        {
+          "path": "server/src/postgres/transfer.ts",
+          "label": "server/src/postgres/transfer.ts"
+        },
+        {
+          "path": "server/src/postgres/export.ts",
+          "label": "server/src/postgres/export.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Does account deletion erase every appearance in a group film?",
+          "a": "No. Existing group films are retained, with segment timing preserved. Own contribution rows and clip access are removed; best-effort external cleanup is not transactional erasure of every copy."
+        },
+        {
+          "q": "Why not delete media inside the SQL transaction?",
+          "a": "SQL cannot atomically commit an S3/file deletion. The code commits authority/reference changes first and removes owned bytes afterwards; missed cleanup does not restore application access."
+        },
+        {
+          "q": "Can a media reference from another group be used directly?",
+          "a": "No. The adapter checks the authorised environment/group scope, store, exact version and integrity metadata. Knowing a key or reference does not establish membership."
+        },
+        {
+          "q": "Do films expire after seven days?",
+          "a": "No. The declared seven-day rule applies to incoming-tagged objects. Published films use fresh film keys; the inspected configuration has no blanket current-film expiry."
+        }
+      ]
+    }
+  ]
+}

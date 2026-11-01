@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { RewindDatabase } from '../db';
 import { cyclePhase } from '../cycles/engine';
+import { beginImmediate } from '../sqlite-busy';
 
 export const MAX_CONTRIBUTION_COUNT = 5;
 export const MAX_CONTRIBUTION_SECONDS = 30;
@@ -216,22 +217,6 @@ export function safeRemoveOwnedPath(path: string | null, root: string | undefine
   rmSync(resolve(path), { force: true });
 }
 
-function beginDeletionTransaction(database: RewindDatabase): void {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    try {
-      database.exec('BEGIN IMMEDIATE');
-      return;
-    } catch (error) {
-      const candidate = error as { code?: string; message?: string };
-      const busy =
-        candidate.code === 'SQLITE_BUSY' ||
-        /database is locked|SQLITE_BUSY/i.test(candidate.message ?? '');
-      if (!busy || attempt === 7) throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
-    }
-  }
-}
-
 /**
  * Tombstone one current-week contribution and return exactly its reserved
  * allowance. The whole eligibility check and ledger mutation run under one
@@ -252,7 +237,7 @@ export function deleteContribution(
       sourceUri: null,
     };
   let result: DeleteContributionResult;
-  beginDeletionTransaction(database);
+  beginImmediate(database);
   try {
     const row = database
       .prepare(

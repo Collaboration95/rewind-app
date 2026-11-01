@@ -200,19 +200,11 @@ test('self-only enabled/snooze/disable survives restart; forged identity and rev
 });
 
 test(
-  'additive reminder migration upgrades legacy groups with UTC and repairs missing preference table',
+  // Since the migration squash a damaged schema is reported and refused.
+  'groups default to UTC and a missing reminder preference table is refused',
   { skip: sqliteOnly },
   async () => {
     await fixture(async ({ database, group }) => {
-      database.exec('DROP TABLE real_group_reminder_preferences');
-      database.exec('ALTER TABLE real_group_metadata DROP COLUMN time_zone');
-      database
-        .prepare(
-          "DELETE FROM schema_migration_markers WHERE migration_key = 'real-group-reminders-v1'",
-        )
-        .run();
-      database.prepare('DELETE FROM schema_migrations WHERE version = 25').run();
-      migrateDatabase(database);
       assert.equal(schemaReadiness(database).ready, true);
       assert.equal(
         database
@@ -222,8 +214,8 @@ test(
       );
       database.exec('DROP TABLE real_group_reminder_preferences');
       assert.equal(schemaReadiness(database).ready, false);
-      migrateDatabase(database);
-      assert.equal(schemaReadiness(database).ready, true);
+      assert.throws(() => migrateDatabase(database), /pre-migration-squash/);
+      assert.equal(schemaReadiness(database).ready, false);
       assert.equal(
         database.prepare('SELECT prompt FROM cycles WHERE id = ?').get(group.cycle.id).prompt,
         'Original prompt',

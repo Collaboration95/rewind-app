@@ -1,0 +1,814 @@
+{
+  "title": "CI/CD and DevSecOps",
+  "lede": "Rewind uses protected pull requests, parallel Quality checks and source-bound Docker bundles to move a change from a feature branch to hosted dev, then through reviewed promotion to release.",
+  "intro": [
+    "This page follows the post-refactor source tree and GitHub observations made on 20 October 2026. The course asks the team to explain source and artifact management, demonstrate the pipeline, and discuss technical findings. Read [Testing and quality](quality.html) for test design and [AWS setup](aws.html) for the deployed services."
+  ],
+  "sections": [
+    {
+      "id": "source-control",
+      "title": "One repository, two protected branches",
+      "summary": "The client, server, tests, deployment scripts and infrastructure change together in Collaboration95/rewind-app.",
+      "paragraphs": [
+        "An issue branch starts from current `dev` and opens a focused PR back to `dev`. Separate Git worktrees let parallel tasks use independent branches and working directories while sharing repository history. A worktree is a checkout, not another deployment environment.",
+        "Both protected branches require a PR, the up-to-date aggregate **Format, lint, typecheck, and test** result, and resolved conversations. Protection includes administrators; force pushes and branch deletion are disabled. These settings were read with authenticated `gh api repos/Collaboration95/rewind-app/branches/dev/protection` and the corresponding `main` endpoint.",
+        "Routine dev PRs need no human approval. The working agreement leaves authentication, private media, database migration, deployment and infrastructure merges to the owner. Batched delivery requires a review-agent pass per PR. A green dev change reaches the release branch through a reviewed PR to `main`; an urgent main fix returns to dev through a PR."
+      ],
+      "sources": [
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md"
+        },
+        {
+          "label": "docs/architecture/delivery-and-verification.md",
+          "path": "docs/architecture/delivery-and-verification.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why keep infrastructure and application code together?",
+          "a": "A PR can review a server change alongside its tests, Docker packaging and required settings. Commit identity connects the review, checks and release bundle."
+        },
+        {
+          "q": "Does a green agent review satisfy main approval?",
+          "a": "No. Live main protection requires one GitHub approval and approval of the last push. An agent review is additional evidence."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Live branch protection · 20 October 2026",
+          "columns": ["Rule", "dev", "main"],
+          "rows": [
+            ["Required aggregate", "Format, lint, typecheck, and test", "Same aggregate"],
+            ["Branch must be up to date", "Yes", "Yes"],
+            ["PR / conversations resolved", "Required / required", "Required / required"],
+            ["Required approvals", "0", "1; last-push approval required"],
+            [
+              "Admins / force pushes",
+              "Protection enforced / disabled",
+              "Protection enforced / disabled"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "local-checks",
+      "title": "Catch problems before the PR",
+      "summary": "Git hooks provide quick feedback locally; CI remains the enforced merge boundary.",
+      "paragraphs": [
+        "The hooks live in `.githooks/`, not `.husky/`. The package `prepare` script sets `core.hooksPath` to `.githooks`; that setting was also verified in this checkout. Pre-commit runs checks, without automatically rewriting source.",
+        "Pre-push compares HEAD with the merge base of `origin/dev`. A documentation-only result skips its test sequence. The local hook does not run the separate PostgreSQL service lane or the full release browser lane. Hooks can be bypassed with Git options; protected-branch CI cannot.",
+        "For an application change, diagnose one focused test and then run `npm run test:fast`. That builds the server once and runs root, server and Jest suites concurrently with CPU caps. It does not collect the CI coverage reports. Changes to export, routing, PWA or accessibility, and every main promotion, also need the relevant slow, coverage and accessibility checks."
+      ],
+      "sources": [
+        {
+          "label": ".githooks/pre-commit",
+          "path": ".githooks/pre-commit"
+        },
+        {
+          "label": ".githooks/pre-push",
+          "path": ".githooks/pre-push"
+        },
+        {
+          "label": "package.json",
+          "path": "package.json"
+        },
+        {
+          "label": "scripts/run-fast-tests.mjs",
+          "path": "scripts/run-fast-tests.mjs"
+        },
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What runs on commit?",
+          "a": "Prettier format checking, ESLint, architecture guardrails and TypeScript checking."
+        },
+        {
+          "q": "Are local hooks the security gate?",
+          "a": "They shorten feedback time. The protected PR requires the server-side Quality result even if a developer bypasses a hook."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Local verification entry points",
+          "columns": ["Entry", "Work"],
+          "rows": [
+            ["pre-commit", "format:check → lint → architecture:check → typecheck"],
+            [
+              "pre-push",
+              "Root tests → Python IaC gate fixtures → server tests → Jest coverage → deployment fixtures"
+            ],
+            ["test:fast", "One server build; concurrent root, server and Jest suites"],
+            ["test:focused", "One exact frontend, server or root test file"]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "quality",
+      "title": "Quality is a dependency graph",
+      "summary": "The required aggregate is one stable check over separate jobs, so parallel work remains visible and failures cannot hide behind a skipped aggregate.",
+      "paragraphs": [
+        "Quality runs on pushes to `dev` and `main`, and PR events opened, synchronize, reopened and ready_for_review, including stacked PRs. A feature-branch push alone does not duplicate the PR run. New runs cancel older runs for the same PR or ref.",
+        "The classifier compares exact base/head trees. Only ordinary, non-executable Markdown at allowed documentation paths qualifies for the skip. JSON, HTML, code, symlinks, executable files, missing bases and empty comparisons run the full applicable checks. Both sides of renames and deletions are examined. This site’s JSON content is therefore not a docs-only change under that rule.",
+        "The aggregate uses `always()`: classification must succeed; a code change needs every applicable lane to succeed; a docs-only change needs the expected lanes to be skipped. Its message explicitly says that no application tests ran. The browser lane is required on main pushes and PRs targeting main, and is deliberately skipped on dev.",
+        "Jest enforces a 70% global statement threshold. Server coverage is measured separately without a numeric threshold. Frontend summaries and server summaries/raw V8 data retain 14 days. PostgreSQL runs the server suite against another engine; its test count is not another set of unique behaviours."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml"
+        },
+        {
+          "label": "scripts/classify-quality-changes.mjs",
+          "path": "scripts/classify-quality-changes.mjs"
+        },
+        {
+          "label": "jest.config.cjs",
+          "path": "jest.config.cjs"
+        },
+        {
+          "label": "scripts/run-server-tests-postgres.mjs",
+          "path": "scripts/run-server-tests-postgres.mjs"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why require one aggregate instead of every job name?",
+          "a": "Branch protection keeps a stable context while the workflow can split jobs. The aggregate explicitly validates all required outcomes."
+        },
+        {
+          "q": "Does docs-only green mean all tests passed?",
+          "a": "No. It means the diff met the narrow documentation rule and the expected checks were skipped. The workflow says no application tests ran."
+        },
+        {
+          "q": "Does dev Quality prove the PWA works in a browser?",
+          "a": "No. Its dedicated export/browser lane is skipped. Relevant changes still need local slow checks; main adds the browser lane."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Quality job inventory",
+          "columns": ["Job ID", "Checks", "When"],
+          "rows": [
+            ["changes", "Exact change-scope classification", "Always"],
+            ["checks", "Parallel matrix: Prettier, ESLint, architecture, TypeScript", "Non-docs"],
+            ["audit", "npm audit --omit=dev --audit-level=high", "Non-docs"],
+            [
+              "static",
+              "Root tests, Terraform policy tests, Python IaC gate failure cases; Chromium/FFmpeg runtime",
+              "Non-docs"
+            ],
+            ["server", "SQLite server tests with V8 coverage", "Non-docs"],
+            ["server-postgres", "Server suite on isolated PostgreSQL 17", "Non-docs"],
+            ["frontend", "Jest with coverage and statement gate", "Non-docs"],
+            [
+              "browser",
+              "Web export, PWA checks, Playwright accessibility/responsive journeys",
+              "Non-docs on main path"
+            ],
+            [
+              "fixtures",
+              "Cloud-free backup, restore, lifecycle, bootstrap and release fixtures",
+              "Non-docs"
+            ],
+            [
+              "gate",
+              "Format, lint, typecheck, and test",
+              "Always; validates success or intended skips"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workflows",
+      "title": "Every repository-owned workflow",
+      "summary": "Seven workflow files cover Quality, security scans, deployment and database operations; Dependabot and GitGuardian are separate integrations.",
+      "paragraphs": [
+        "All seven workflows are listed below. Quality and deployment share the same fail-safe classifier. Deployment workflows are triggered by a push and wait internally for that exact commit’s successful branch push Quality run; they do not use a `workflow_run` trigger.",
+        "The database workflow is operational tooling, not an automatic action on each merge. It binds dev to branch `dev` and release to branch `main`, selects the matching GitHub environment, and shares that target’s deployment concurrency group."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml"
+        },
+        {
+          "label": ".github/workflows/codeql.yml",
+          "path": ".github/workflows/codeql.yml"
+        },
+        {
+          "label": ".github/workflows/release-security.yml",
+          "path": ".github/workflows/release-security.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-dev.yml",
+          "path": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-release.yml",
+          "path": ".github/workflows/deploy-release.yml"
+        },
+        {
+          "label": ".github/workflows/database-operations.yml",
+          "path": ".github/workflows/database-operations.yml"
+        },
+        {
+          "label": ".github/workflows/secret-scan.yml",
+          "path": ".github/workflows/secret-scan.yml"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Does every merge run a database restore?",
+          "a": "No. Database operations require explicit manual dispatch and a selected target/operation."
+        },
+        {
+          "q": "Why do deploy and database operations share concurrency?",
+          "a": "An import or recovery must not overlap a deployment that restarts writers or changes the selected database."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Workflow → trigger → jobs",
+          "columns": ["Workflow file", "Trigger", "Jobs / outcome"],
+          "rows": [
+            [
+              "quality.yml",
+              "dev/main push; PR opened/synchronize/reopened/ready_for_review",
+              "changes; checks matrix; audit; static; server; server-postgres; frontend; browser; fixtures; gate"
+            ],
+            [
+              "codeql.yml",
+              "dev/main push; PR; Monday 03:23 UTC (11:23 SGT)",
+              "changes; analyze matrix: JavaScript/TypeScript, Python, Actions"
+            ],
+            [
+              "release-security.yml",
+              "dev/main pushes; PR with existing path filters; v* tags; manual",
+              "images matrix: runtime + web; iac configuration scan and gate"
+            ],
+            [
+              "deploy-dev.yml",
+              "Push to dev; manual",
+              "changes; deploy with exact-bundle Trivy gate and provenance; report-only ZAP baseline after deploy; docs-only push skips deploy"
+            ],
+            [
+              "deploy-release.yml",
+              "Push to main; manual install or prepare",
+              "changes; deploy in environment release; prepare preserves retained files without starting writers"
+            ],
+            [
+              "database-operations.yml",
+              "Manual; explicit dev/release target",
+              "operate: status, bootstrap, import, resume, backup or rehearse-restore"
+            ],
+            [
+              "secret-scan.yml",
+              "PR; dev/main push",
+              "Gitleaks v8.30.1 full history; redacted SARIF artifact and code scanning upload"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "title": "Security checks cover different failure modes",
+      "summary": "DevSecOps combines source analysis, dependency checks, image/configuration scans, secret detection and restricted deployment identity.",
+      "paragraphs": [
+        "CodeQL and Release security report independently of aggregate Quality. The live branch protections require only the aggregate context; the production dependency audit is inside it. A green Quality result therefore does not mean every independent security scan was a required merge gate.",
+        "GitGuardian is a GitHub App check, separate from the seven workflow files. A `gh api` check-runs query for refactor commit `5ac4e67` showed **GitGuardian Security Checks: success** from app `gitguardian` on 20 October. Repository settings also showed GitHub secret scanning, push protection and Dependabot security updates enabled.",
+        "GitHub deploy jobs request an OIDC token and exchange it with AWS STS for a one-hour role session. Trust restricts audience, exact repository/environment subject and branch ref. There are separate dev and release deploy roles. This removes stored AWS deploy keys from GitHub; the running Lightsail application separately uses a Terraform-created, environment-scoped IAM user for S3 and pool-scoped Cognito account deletion.",
+        "Trivy’s IaC gate accepts only recorded exact findings with an owner, reason and expiry. An exception is a documented risk decision, not a claim that the finding was fixed. The current decisions expire on 31 October 2026.",
+        "Deploy dev scans the verified runtime.tar and web.tar archives with Trivy v0.70.0 before host upload. Missing Alpine OS/package coverage or HIGH/CRITICAL vulnerabilities fail deployment. ZAP then scans the deployed public URL without authentication: passive baseline and spidering, report-only. It does not establish authenticated API coverage. Gitleaks fails its own job on detected secrets; only aggregate Quality remains required by branch protection."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/codeql.yml",
+          "path": ".github/workflows/codeql.yml"
+        },
+        {
+          "label": ".github/workflows/release-security.yml",
+          "path": ".github/workflows/release-security.yml"
+        },
+        {
+          "label": ".github/dependabot.yml",
+          "path": ".github/dependabot.yml"
+        },
+        {
+          "label": ".github/iac-scan-exceptions.json",
+          "path": ".github/iac-scan-exceptions.json"
+        },
+        {
+          "label": "scripts/check-iac-scan.py",
+          "path": "scripts/check-iac-scan.py"
+        },
+        {
+          "label": "infra/terraform/demo/deploy.tf",
+          "path": "infra/terraform/demo/deploy.tf"
+        },
+        {
+          "label": "infra/terraform/release/main.tf",
+          "path": "infra/terraform/release/main.tf"
+        },
+        {
+          "label": "infra/terraform/media/main.tf",
+          "path": "infra/terraform/media/main.tf"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What is the difference between SAST and SCA here?",
+          "a": "CodeQL analyses source and workflow behaviour. npm audit and Dependabot examine dependency vulnerabilities and propose package updates."
+        },
+        {
+          "q": "Are all AWS credentials short lived?",
+          "a": "GitHub deployment credentials are STS sessions from OIDC. The Lightsail runtime uses dedicated IAM-user keys delivered privately by Terraform; do not confuse these identities."
+        },
+        {
+          "q": "Is a clean Trivy run proof of no vulnerabilities?",
+          "a": "It is evidence for the scanned image/configuration and the configured severity/exception policy. It does not prove the absence of every security defect."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Control and concrete implementation",
+          "columns": ["Control", "Tool / policy", "Evidence produced"],
+          "rows": [
+            [
+              "SAST",
+              "CodeQL security-extended; JS/TS, Python, Actions",
+              "Analysis results; docs-only analysis can skip"
+            ],
+            [
+              "SCA gate",
+              "npm audit, production dependencies, HIGH threshold",
+              "Required Quality audit result"
+            ],
+            [
+              "Dependency updates",
+              "Dependabot monthly grouped npm/Actions/Docker PRs to dev; security updates enabled",
+              "Reviewable version/security update PRs; major version updates excluded from routine config"
+            ],
+            [
+              "Container scan",
+              "Trivy candidate scans plus an exact-bundle HIGH/CRITICAL deploy gate on dev",
+              "Per-image CycloneDX SBOMs and JSON vulnerability reports tied to the deploy manifest"
+            ],
+            [
+              "IaC scan",
+              "Trivy Terraform/Docker configuration + Python exact-finding gate",
+              "Complete JSON report; expiring accepted decisions"
+            ],
+            [
+              "Secret detection",
+              "Gitleaks default rules with path-AND-exact-value exceptions for five historical non-credential values; GitGuardian; native scanning/push protection",
+              "Full-history redacted SARIF, code scanning results, commit checks and repository protection"
+            ],
+            [
+              "Deployment identity",
+              "GitHub OIDC → STS → environment role",
+              "No long-lived GitHub deploy access key"
+            ],
+            [
+              "Supply-chain hygiene",
+              "Action commit-SHA pinning; npm ci and lockfile",
+              "Reviewed dependency/action revisions"
+            ],
+            [
+              "DAST",
+              "OWASP ZAP baseline after successful dev deployment; unauthenticated and report-only",
+              "JSON, HTML and Markdown reports plus job summary"
+            ],
+            [
+              "Build provenance",
+              "GitHub OIDC and attest-build-provenance for dev bundle and security manifest",
+              "Sigstore attestations; verify downloaded tarball with gh attestation verify"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "delivery-flow",
+      "title": "From commit to a healthy image pair",
+      "summary": "CI builds the runtime and web images once for a deployment bundle; the host verifies and loads them instead of rebuilding source.",
+      "paragraphs": [
+        "For a non-docs merge, the deploy job checks out the event SHA and waits up to 1,500 seconds for that SHA’s successful Quality push run on its own branch. A failed, cancelled or timed-out result refuses deployment. A manual dispatch without a comparison base still needs a qualifying green commit.",
+        "`deploy/release.py` builds a source-bound tar bundle: allowlisted source/operator files, SHA-tagged runtime and web images, manifest, image identities and checksums. The workflow verifies it before transfer and compares its SHA-256 on the host. There is no ECR push/pull stage in this path.",
+        "Release security still builds independent candidates. Deploy dev additionally scans the exact saved images inside its verified bundle, writes a release-manifest.json binding the commit, Quality run, image identities and artifact hashes, and attests the bundle and security manifest before transfer. HIGH/CRITICAL findings stop upload. This exact-bundle scan and provenance path is specific to dev; deploy-release.yml keeps its existing path.",
+        "After OIDC authentication, CI requires an already-running host, opens SSH to the runner’s /32 address, obtains temporary Lightsail SSH credentials and pins returned host keys. It transfers the bundle, streams hosted settings from private S3, installs the pair, then closes the temporary SSH rule and removes runner key material. These jobs never apply Terraform or start/stop the host."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/deploy-dev.yml",
+          "path": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-release.yml",
+          "path": ".github/workflows/deploy-release.yml"
+        },
+        {
+          "label": "deploy/release.py",
+          "path": "deploy/release.py"
+        },
+        {
+          "label": "deploy/release-host.sh",
+          "path": "deploy/release-host.sh"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why ship a bundle instead of building on the server?",
+          "a": "The host loads the reviewed commit’s verified image pair. It avoids source/dependency rebuild drift and retains a compatible prior bundle for rollback."
+        },
+        {
+          "q": "Does CI deploy an arbitrary latest branch head?",
+          "a": "No. It builds the triggering event revision and requires that revision’s branch push Quality result."
+        }
+      ],
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Normal executable change",
+          "steps": [
+            {
+              "label": "Commit",
+              "sub": "Feature branch",
+              "detail": "Local hooks check the work before it reaches the PR.",
+              "icon": "github"
+            },
+            {
+              "label": "PR checks",
+              "sub": "Parallel Quality lanes",
+              "detail": "The required aggregate validates all applicable lane results. Independent security checks report alongside it.",
+              "icon": "githubactions",
+              "accent": true
+            },
+            {
+              "label": "Merge",
+              "sub": "dev or reviewed main",
+              "detail": "Protected branches require up-to-date Quality and resolved conversations. Main adds approval.",
+              "icon": "github"
+            },
+            {
+              "label": "Push Quality",
+              "sub": "Same merge SHA",
+              "detail": "The deployment waits for the exact branch push result, not only the earlier PR result.",
+              "icon": "githubactions"
+            },
+            {
+              "label": "Build images",
+              "sub": "Runtime and web",
+              "detail": "release.py builds and verifies a source-bound Docker bundle with checksums.",
+              "icon": "docker"
+            },
+            {
+              "label": "Scan and attest dev bundle",
+              "sub": "Before host upload",
+              "detail": "Trivy scans the saved runtime and web images, gates HIGH/CRITICAL, retains SBOMs and JSON reports, and signs provenance for the bundle and manifest.",
+              "icon": "trivy"
+            },
+            {
+              "label": "Install",
+              "sub": "OIDC and temporary SSH",
+              "detail": "The host verifies the bundle, checks configuration/schema compatibility and loads its images."
+            },
+            {
+              "label": "Health check",
+              "sub": "Runtime, web and identity",
+              "detail": "The active release pointer advances only after health succeeds and running image identities match.",
+              "accent": true
+            }
+          ],
+          "caption": "Dev pushes target rewind-demo. Reviewed main pushes target rewind-release. Documentation-only pushes skip deployment. The exact-bundle scan/provenance step and post-deploy ZAP job apply to dev."
+        }
+      ]
+    },
+    {
+      "id": "pipeline-artifacts",
+      "title": "Pipeline artifacts",
+      "summary": "Artifacts tie a workflow run to test results, security findings and the exact dev release bundle.",
+      "paragraphs": [
+        "In GitHub, open Actions, select the workflow run for the commit, then scroll to Artifacts. Open a job to see its summary table. CodeQL and uploaded Gitleaks SARIF are also visible under Security → Code scanning. GitHub links build attestations from the deploy job summary.",
+        "The manifest records commit, workflow/run/attempt, successful Quality run ID, timestamp, image IDs, archive/available manifest digests, scan counts and SHA-256 for the tarball, both SBOMs and both Trivy JSON reports. Locally built images may have no registry digest; the archive digest identifies the bytes shipped. The manifest is retained as an Actions artifact, rather than installed on the host.",
+        "New deploy artifacts and ZAP results need a successful post-merge dev deployment. A PR Quality run cannot prove that deployment occurred. Artifacts are retained for 30 days except the existing server/frontend coverage artifacts (14 days). Documentation-only Quality runs preserve their existing skips and produce no test/audit artifacts."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-dev.yml",
+          "path": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "label": ".github/workflows/release-security.yml",
+          "path": ".github/workflows/release-security.yml"
+        },
+        {
+          "label": ".github/workflows/secret-scan.yml",
+          "path": ".github/workflows/secret-scan.yml"
+        },
+        {
+          "label": ".github/workflows/codeql.yml",
+          "path": ".github/workflows/codeql.yml"
+        },
+        {
+          "label": "deploy/scan-release.py",
+          "path": "deploy/scan-release.py"
+        }
+      ],
+      "tables": [
+        {
+          "title": "Run artifacts and evidence",
+          "columns": ["Artifact", "Workflow / job", "Format / files", "What it proves"],
+          "rows": [
+            [
+              "quality-test-results-root",
+              "Quality / static",
+              "test-results-root.xml (JUnit)",
+              "Root and Terraform tests; counts in job summary"
+            ],
+            [
+              "server-coverage",
+              "Quality / server",
+              "test-results-server.xml; coverage-summary.json; server-summary.txt; server-v8/*.json",
+              "Server test results and measured line/branch/function coverage (14 days)"
+            ],
+            [
+              "frontend-coverage",
+              "Quality / frontend",
+              "frontend-results.json; coverage-summary.json",
+              "Jest test counts and measured statement coverage (14 days); jest-junit is absent"
+            ],
+            [
+              "quality-npm-audit",
+              "Quality / audit",
+              "npm-audit.json",
+              "Production dependency findings; HIGH+ fails the required Quality gate"
+            ],
+            [
+              "dev-release-security-<commit>",
+              "Deploy dev / deploy",
+              "sbom-runtime.cdx.json; sbom-web.cdx.json; trivy-runtime.json; trivy-web.json; release-manifest.json",
+              "Exact bundled image inventories, severity counts and SHA-256 links to the bundle; HIGH/CRITICAL prevents host upload"
+            ],
+            [
+              "dev-release-bundle-<commit>",
+              "Deploy dev / deploy",
+              "rewind-release.tar; Sigstore attestation JSON bundle",
+              "Retained deployable image pair and build provenance; verify with gh attestation verify --repo Collaboration95/rewind-app rewind-release.tar"
+            ],
+            [
+              "zap-baseline-<commit>",
+              "Deploy dev / dast",
+              "report_json.json; report_html.html; report_md.md",
+              "Unauthenticated baseline findings after deployment; report-only"
+            ],
+            [
+              "gitleaks-<commit>",
+              "Secret scan / gitleaks",
+              "gitleaks.sarif (redacted)",
+              "Full-history secrets scan with documented false-positive allowlist; also in Security → Code scanning"
+            ],
+            [
+              "release-security-runtime/web-<commit>",
+              "Release security / images",
+              "<image>-sbom.cdx.json; <image>-vulnerabilities.txt; <image>-image-identity.txt",
+              "Independent candidate image scans, separate from exact deployed bundle evidence"
+            ],
+            [
+              "release-security-iac-<commit>",
+              "Release security / iac",
+              "iac-full.json",
+              "Terraform/Docker findings evaluated against exact, expiring exceptions"
+            ],
+            [
+              "CodeQL analysis results",
+              "CodeQL / analyze",
+              "Code scanning analysis",
+              "SAST for JavaScript/TypeScript, Python and Actions; Security → Code scanning"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "promotion-recovery",
+      "title": "Promotion, verification and rollback",
+      "summary": "Release has both branch review and a live environment approval gate; rollback preserves compatibility with stored data and configuration.",
+      "paragraphs": [
+        "Live `gh api .../environments/release` showed a required reviewer, self-review prevented and a main-only branch policy on 20 October. Dev had no environment protection rules. Although workflow comments describe main review as the human gate, the deployed GitHub settings add this environment approval. Approval waiting time must not be reported as build time.",
+        "Host activation checks runtime `/health`, nginx `/api/health`, and the actual running runtime/web image IDs and source-revision labels. The workflow then probes `http://<host-ip>/api/health` from the runner. That is an origin HTTP probe. A separate request through the CloudFront HTTPS URL is needed to verify the public TLS/distribution path; real sign-in, capture and playback remain product checks.",
+        "The installer restores the prior image pair when activation fails and compatible recovery succeeds. An explicit `release-host.sh rollback` stages the retained prior bundle and checks health again. It refuses incompatible configuration or a database schema newer than the target. Rolling back images does not reverse migrations or restore post-cutover data.",
+        "For a database rollback, stop writers and reconcile a consistent PostgreSQL-to-SQLite export before switching. An old SQLite snapshot cannot preserve later PostgreSQL writes. [AWS backups](aws.html#backups) explains the separate data recovery paths."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/deploy-dev.yml",
+          "path": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-release.yml",
+          "path": ".github/workflows/deploy-release.yml"
+        },
+        {
+          "label": "deploy/release-host.sh",
+          "path": "deploy/release-host.sh"
+        },
+        {
+          "label": "docs/architecture/postgresql-operations.md",
+          "path": "docs/architecture/postgresql-operations.md"
+        },
+        {
+          "label": "docs/architecture/release-cutover.md",
+          "path": "docs/architecture/release-cutover.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What proves the deployed images are the intended ones?",
+          "a": "The bundle checksums are verified, then running container image IDs and revision labels are compared with the loaded candidate pair before activation."
+        },
+        {
+          "q": "Can rollback always restore service?",
+          "a": "No. Schema/configuration changes can make an older image unsafe. Recovery then needs a compatible release or an explicit reconciled data recovery procedure."
+        },
+        {
+          "q": "Does a health response prove a full user journey?",
+          "a": "No. It proves the specific readiness checks answered. Cognito redirects, uploads, film release and playback need separate exercised journeys."
+        }
+      ]
+    },
+    {
+      "id": "technical-findings",
+      "title": "Failures changed the engineering approach",
+      "summary": "The useful lesson is the failure mechanism and the resulting control, rather than a claim that CI is now infallible.",
+      "paragraphs": [
+        "The 8 October baseline in [issue #499](https://github.com/Collaboration95/rewind-app/issues/499) records two first attempts that hung in apt-dependent installation: Playwright/Chromium setup and FFmpeg. Both needed reruns. Their successful second attempts were used for job timing; the long failed attempts were excluded from the reported clean-run wall-time distribution.",
+        "The later speedup removed unnecessary setup and split independent work. The workflows still contain apt-dependent steps, so the repository does not establish that package-manager hangs have been eliminated.",
+        "**A refactor broke a deploy script.** The Deploy dev run after the #581 merge failed at \"Build the verified release bundle\". `deploy/release.py` read the expected migration versions by parsing `server/src/db.ts`, and the refactor had moved them to `server/src/schema.ts`. Quality was green because no check exercised that parse against the real tree. [PR #583](https://github.com/Collaboration95/rewind-app/pull/583) pointed the script at `schema.ts` and added a guard in `tests/deploy/release-bundle.test.sh`. The next deploys succeeded, and hosted dev health reports PostgreSQL, schema ready, migration version 31. The lesson: a script that parses source files needs a test that fails when the file moves."
+      ],
+      "sources": [
+        {
+          "label": ".githooks/pre-commit",
+          "path": ".githooks/pre-commit"
+        },
+        {
+          "label": ".githooks/pre-push",
+          "path": ".githooks/pre-push"
+        },
+        {
+          "label": "scripts/run-root-tests.mjs",
+          "path": "scripts/run-root-tests.mjs"
+        },
+        {
+          "label": "tests/responsive/helpers/real-account.ts",
+          "path": "tests/responsive/helpers/real-account.ts"
+        },
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml"
+        },
+        {
+          "label": "scripts/run-fast-tests.mjs",
+          "path": "scripts/run-fast-tests.mjs"
+        },
+        {
+          "label": "deploy/release-host.sh",
+          "path": "deploy/release-host.sh"
+        },
+        {
+          "label": "tests/deploy/release-bundle.test.sh",
+          "path": "tests/deploy/release-bundle.test.sh"
+        },
+        {
+          "label": "deploy/release.py",
+          "path": "deploy/release.py"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What caused the browser flakiness?",
+          "a": "Two workers uploaded for the same member while the server accepted one processing job at a time. A slower CI runner exposed the overlap; the fix serialises those uploads and waits for processing."
+        },
+        {
+          "q": "Did speeding up CI reduce its assertions?",
+          "a": "The documented changes parallelised independent suites, cached browser downloads and removed duplicate setup. Browser coverage remains on the release path; skipped scope is explicit."
+        },
+        {
+          "q": "What is still unresolved about apt hangs?",
+          "a": "Caching reduces browser download work, but system dependencies are still installed. The recorded incidents justify monitoring installation failures; they do not prove a complete fix."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Concrete findings and responses",
+          "columns": ["Finding", "Evidence", "Response"],
+          "rows": [
+            [
+              "apt-dependent steps hung",
+              "8 Oct #499; runs 37746226332 and 37645884109 required attempt 2",
+              "Cache Chromium; avoid FFmpeg install when already present; retain timeouts. No claim of complete elimination."
+            ],
+            [
+              "Shared-member browser upload race",
+              "Commit dde2340, 12 Oct",
+              "Cross-worker upload lock; wait for earlier processing to finish."
+            ],
+            [
+              "Hook Git environment leaked into fixture repos",
+              "Commit 08350a9, 8 Oct",
+              "Unset variables reported by git rev-parse --local-env-vars before checks."
+            ],
+            [
+              "Tests absent from explicit file lists",
+              "Closed #455, delivered via #464",
+              "Discover root/script tests through the shared runner."
+            ],
+            [
+              "Repeated setup and serial work",
+              "Closed #493–#496; #517",
+              "Parallel Jest/static checks; one local server build; concurrent fast suites; browser cache; fixtures without npm ci."
+            ],
+            [
+              "Old bundles consumed host disk",
+              "release-host.sh prune_releases and require_disk_for",
+              "Retain current/previous/pending releases; prune older image pairs; check free bytes before staging."
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "measured-runs",
+      "title": "Use dated runs, not invented averages",
+      "summary": "Recent timings are individual observed workflow spans, not service-level promises or a benchmark comparison.",
+      "paragraphs": [
+        "`gh run list` was read on 20 October 2026. The spans below are `updatedAt − createdAt`; they include queueing and workflow overhead. They are not sums of job execution time. These examples establish real recent runs without treating a small sample as a success-rate statistic.",
+        "For presentation, open the linked Quality run and explain one lane, its aggregate result and the subsequent dev deployment. Expand a skipped browser job to explain why a green dev run is narrower than a main promotion. The current refactor check run also shows the GitGuardian and Trivy results described above."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-dev.yml",
+          "path": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "label": "docs/architecture/delivery-and-verification.md",
+          "path": "docs/architecture/delivery-and-verification.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "How long does the pipeline take?",
+          "a": "A recent dev Quality span was 3m50s and its separate deploy workflow span was 7m30s, including its Quality wait. These are dated examples, not guaranteed durations."
+        },
+        {
+          "q": "Can you add Quality and deployment times?",
+          "a": "Not as end-to-end latency. They start on the same push and overlap while deployment waits for Quality."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Observed 20 October runs",
+          "columns": ["Run", "Result", "Observed span"],
+          "rows": [
+            [
+              "[Dev Quality 39387324414](https://github.com/Collaboration95/rewind-app/actions/runs/39387324414)",
+              "Success; 07:33:46–07:37:36 UTC",
+              "3m50s"
+            ],
+            [
+              "[Dev deploy 39387324377](https://github.com/Collaboration95/rewind-app/actions/runs/39387324377)",
+              "Success; 07:33:46–07:41:16 UTC",
+              "7m30s; overlaps Quality"
+            ],
+            [
+              "[Refactor Quality 39400032923](https://github.com/Collaboration95/rewind-app/actions/runs/39400032923)",
+              "Success; 09:21:07–09:25:10 UTC",
+              "4m03s"
+            ],
+            [
+              "[Refactor Release security 39400033000](https://github.com/Collaboration95/rewind-app/actions/runs/39400033000)",
+              "Success; 09:21:07–09:22:16 UTC",
+              "1m09s"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

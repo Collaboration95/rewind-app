@@ -2,7 +2,7 @@
 
 This runner measures synthetic local API and film compilation performance on
 existing application adapters. It does not establish hosted, device, provider,
-or final database performance. The #267 research document remains unchanged.
+or final database performance.
 
 ## Reproduce
 

@@ -132,8 +132,8 @@ test('archive films and clips keyset-page independently and drop resized media',
       tamperedPage.archive.films.map((film) => film.id),
       ['page-film-50'],
     );
-    const playback = await fetch(`${baseUrl}/films/page-film-50/play?${query}`, { headers });
-    assert.equal(playback.status, 404);
+    const tamperedPlayback = await fetch(`${baseUrl}${tamperedPage.archive.films[0].playbackPath}`);
+    assert.equal(tamperedPlayback.status, 404);
     // A resized object no longer matches its record and leaves the listing.
     await writeFile(mediaPath, Buffer.from('truncated'));
     const resizedPage = await (
@@ -143,8 +143,6 @@ test('archive films and clips keyset-page independently and drop resized media',
       )
     ).json();
     assert.deepEqual(resizedPage.archive.films, []);
-    const download = await fetch(`${baseUrl}/films/page-film-50/download?${query}`, { headers });
-    assert.equal(download.status, 404);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     database.close();

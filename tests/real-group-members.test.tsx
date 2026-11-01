@@ -2,6 +2,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { useRealAccount } from '../src/auth/RealAccountProvider';
 import { RealAccountGroupExperience } from '../src/groups/RealAccountGroupExperience';
+import { jsonResponse } from './mocks/fetch';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
@@ -22,10 +23,6 @@ jest.mock('../src/chat/native-event-source', () => ({
     removeEventListener: jest.fn(),
   }),
 }));
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
-}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

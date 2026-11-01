@@ -85,14 +85,28 @@ jobs:
         with:
           node-version-file: .nvmrc
       # The audit reads package-lock.json and the registry, so it needs no install.
-      - run: npm audit --omit=dev --audit-level=high
+      - name: Audit production dependencies and retain JSON
+        run: |
+          mkdir -p coverage
+          npm audit --omit=dev --audit-level=high --json > coverage/npm-audit.json
+      - name: Summarise dependency audit
+        if: always()
+        run: python3 scripts/quality-summary.py audit
+      - name: Retain dependency audit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-npm-audit
+          path: coverage/npm-audit.json
+          if-no-files-found: warn
+          retention-days: 30
 
   static:
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     name: Root and IaC tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -115,12 +129,25 @@ jobs:
         # A cache hit makes the install skip the browser download; the system
         # libraries are installed either way.
         run: |
-          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          scripts/ci/install-ffmpeg.sh
           npx playwright install --with-deps chromium
       - name: Run root and Terraform policy tests
+        env:
+          REWIND_TEST_JUNIT: coverage/test-results-root.xml
         run: npm run test:root
       - name: Test IaC scan gate failure cases
         run: python3 -m unittest discover -s tests/security -p 'test_*.py'
+      - name: Summarise root test results
+        if: always()
+        run: python3 scripts/quality-summary.py root
+      - name: Retain root JUnit results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-test-results-root
+          path: coverage/test-results-root.xml
+          if-no-files-found: warn
+          retention-days: 30
 
   server:
     needs: changes
@@ -138,19 +165,24 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install FFmpeg
-        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+        run: scripts/ci/install-ffmpeg.sh
       - name: Run server tests and collect separate coverage
         run: |
           npm run server:build
           mkdir -p coverage/server-v8
           set -o pipefail
-          NODE_V8_COVERAGE=coverage/server-v8 node --experimental-test-coverage '--test-coverage-include=server/dist/**/*.js' --test server/tests/*.test.mjs | tee coverage/server-summary.txt
+          NODE_V8_COVERAGE=coverage/server-v8 node --experimental-test-coverage '--test-coverage-include=server/dist/**/*.js' --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=coverage/test-results-server.xml --test-reporter=./scripts/coverage-summary-reporter.mjs --test-reporter-destination=coverage/coverage-summary.json server/tests/*.test.mjs | tee coverage/server-summary.txt
+      - name: Summarise server tests and coverage
+        if: always()
+        run: python3 scripts/quality-summary.py server
       - name: Retain server coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: server-coverage
           path: |
+            coverage/test-results-server.xml
+            coverage/coverage-summary.json
             coverage/server-summary.txt
             coverage/server-v8/*.json
           if-no-files-found: ignore
@@ -172,13 +204,21 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run Jest with measured statement gate
-        run: npx jest --coverage
+        # jest-junit is not installed; retain Jest's native test-results JSON.
+        run: |
+          mkdir -p coverage
+          npx jest --coverage --json --outputFile=coverage/frontend-results.json
+      - name: Summarise frontend tests and coverage
+        if: always()
+        run: python3 scripts/quality-summary.py frontend
       - name: Retain frontend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: frontend-coverage
-          path: coverage/coverage-summary.json
+          path: |
+            coverage/coverage-summary.json
+            coverage/frontend-results.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -188,7 +228,7 @@ jobs:
     # Keep browser coverage on the reviewed release path, but out of dev PRs.
     if: ${{ needs.changes.outputs.docs_only != 'true' && (github.ref == 'refs/heads/main' || github.base_ref == 'main') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -210,7 +250,7 @@ jobs:
         # A cache hit makes the install skip the browser download; the system
         # libraries are installed either way.
         run: |
-          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          scripts/ci/install-ffmpeg.sh
           npx playwright install --with-deps chromium
       - name: Export once and check PWA, accessibility, and responsive behavior
         run: |
@@ -233,18 +273,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Run backup, lifecycle, restore, and host fixtures
-        run: |
-          bash tests/deploy/backup-manifest.test.sh
-          bash tests/deploy/wake-recovery-selection.test.sh
-          bash tests/deploy/lifecycle-guards.test.sh
-          bash tests/deploy/recovery-smoke.test.sh
-          bash tests/deploy/restore-atomic.test.sh
-          bash tests/deploy/ownership-contract.test.sh
-          bash tests/deploy/host-preflight.test.sh
-          bash deploy/tests/host-bootstrap.test.sh
-          for fixture in tests/deploy/*release*.test.sh deploy/tests/*release*.test.sh; do
-            if [ -f "$fixture" ]; then bash "$fixture"; fi
-          done
+        run: bash tests/deploy/run-fixtures.sh
 
   server-postgres:
     needs: changes
@@ -272,7 +301,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install FFmpeg
-        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+        run: scripts/ci/install-ffmpeg.sh
       - name: Run the server suite against PostgreSQL
         env:
           REWIND_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres

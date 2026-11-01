@@ -1,14 +1,7 @@
 import { createRealAccountVideoRuntimeClient } from '../src/capture/real-account-video-runtime';
 import { ClipUploadSession } from '../src/capture/clip-uploader';
 import type { ClipUploadInput, PendingClipUpload } from '../src/domain/video';
-
-function response(body: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  } as Response;
-}
+import { jsonResponse as response } from './mocks/fetch';
 
 const pending: PendingClipUpload = {
   contribution: {

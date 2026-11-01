@@ -448,7 +448,7 @@ test('compilation audit detects a film bound to a different cycle than its clip'
 });
 
 test(
-  'migration 017 preserves audit history and permits consistency repair events',
+  'the audit table keeps earlier events and permits consistency repair events',
   { skip: sqliteOnly },
   async () => {
     await fixture(async ({ database }) => {
@@ -459,28 +459,6 @@ test(
               ('audit-preserved-integrity', 'media.integrity_failed', NULL, 'clip:safe-id', '2026-09-25T00:00:01.000Z', 'failure')`,
         )
         .run();
-      database.exec(`
-      DROP INDEX audit_events_occurred_at_idx;
-      DROP INDEX audit_events_resource_id_idx;
-      ALTER TABLE audit_events RENAME TO audit_events_old;
-      CREATE TABLE audit_events (
-        id TEXT PRIMARY KEY,
-        event_type TEXT NOT NULL CHECK (event_type IN (
-          'session.created', 'session.validated', 'session.rejected', 'session.expired',
-          'session.invalidated', 'job.started', 'job.completed', 'job.failed', 'media.integrity_failed'
-        )),
-        actor_member_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
-        resource_id TEXT,
-        occurred_at TEXT NOT NULL,
-        result TEXT NOT NULL CHECK (result IN ('success', 'failure', 'denied'))
-      );
-      INSERT INTO audit_events SELECT * FROM audit_events_old;
-      DROP TABLE audit_events_old;
-    `);
-      database.prepare('DELETE FROM schema_migrations WHERE version = 17').run();
-      database
-        .prepare('DELETE FROM schema_migration_markers WHERE migration_key = ?')
-        .run('consistency-repair-audit-v1');
       migrateDatabase(database);
       assert.equal(schemaReadiness(database).ready, true);
       const rows = database.prepare('SELECT id, event_type FROM audit_events ORDER BY id').all();

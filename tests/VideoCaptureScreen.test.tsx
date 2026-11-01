@@ -59,7 +59,6 @@ function videoPlatform(permissions: PermissionSnapshot): TestVideoPlatform {
     captureStill: jest.fn(),
     getCapabilities: jest.fn().mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
     getPermissions: jest.fn().mockResolvedValue(permissions),
-    kind: 'expo',
     openSettings: jest.fn().mockResolvedValue(undefined),
     recordClip: jest.fn().mockResolvedValue(clip),
     requestPermissions: jest.fn().mockResolvedValue(permissions),

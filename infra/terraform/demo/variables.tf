@@ -64,19 +64,6 @@ variable "ssh_cidr" {
   default     = "27.125.178.53/32"
 }
 
-variable "automatic_start_schedule_expression" {
-  type        = string
-  description = "Optional EventBridge Scheduler expression for automatic startup; null disables scheduled starts."
-  default     = null
-  nullable    = true
-}
-
-variable "automatic_start_schedule_timezone" {
-  type        = string
-  description = "IANA timezone used only when an automatic-start schedule is enabled."
-  default     = "Asia/Singapore"
-}
-
 variable "demo_instance_enabled" {
   type        = bool
   description = "Whether the disposable Lightsail runtime should exist. Set false only after a verified S3 backup."

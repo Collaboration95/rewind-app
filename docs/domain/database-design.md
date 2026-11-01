@@ -8,8 +8,9 @@ proof of any environment's deployment or stored data.
 adapter, serialized writers and SQLite parity decision. The schema sources are
 [PostgreSQL baseline 030](../../server/migrations/postgres/030-baseline.sql),
 [Cognito migration 031](../../server/migrations/postgres/031-cognito-accounts.sql)
-and the [SQLite migration chain](../../server/migrations/), including startup
-repairs in [db.ts](../../server/src/db.ts). PostgreSQL uses text with byte-order
+and the [SQLite baseline](../../server/migrations/sqlite-baseline.sql), which a
+fresh database runs once (receipts and open logic in
+[schema.ts](../../server/src/schema.ts); older databases are refused). PostgreSQL uses text with byte-order
 collation, `BIGINT` for integral values and double precision for fractional
 media durations/usage; timestamps here are ISO-8601 text. Its FKs are deferrable,
 initially immediate. SQLite retains its own affinity and migration history.
@@ -86,7 +87,7 @@ an actual membership. Its account PK means at most one selected group per
 account and at most one selection per membership; application authority also
 matches the signed-in account.
 
-[Migration 022](../../server/migrations/022-real-media-profile-bridge.sql) and
+[Migration 022](../../server/migrations/sqlite-baseline.sql) and
 the PostgreSQL baseline insert/update/delete triggers mirror real profiles into
 `profiles` with the same ID and `is_synthetic=0`. This is not an FK between
 profile tables. Real-group authority comes from `real_group_memberships`, never

@@ -110,17 +110,11 @@ provisioning, deployment completion or device acceptance. A normal executable
 merge to dev automatically attempts deployment after Quality; docs-only merges
 skip it. Deployment is not an additional issue acceptance gate.
 
-Two existing manually dispatched workflows have separate scopes:
+One existing manually dispatched workflow has a separate scope:
 
 - [Database operations](../../.github/workflows/database-operations.yml): `operate`
   only on dev, environment `dev`, shared dev-deploy concurrency; operations
   `status`, `bootstrap`, `import`, `resume`, `backup`, `rehearse-restore`.
-- [Reviewed media Terraform](../../.github/workflows/terraform-environments.yml):
-  `media` only for dev/ref dev or prod/ref main, `plan` or `apply`, environment
-  `terraform-<environment>-<operation>`. Preflight checks protections and a
-  green head before AWS credentials. Apply validates the reviewed plan run,
-  hashes and private S3 metadata version. No PR trigger exposes state credentials.
-  See [environment procedure](../../infra/terraform/environments/README.md).
 
 ## Verification boundaries
 

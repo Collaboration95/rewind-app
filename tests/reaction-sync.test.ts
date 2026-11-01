@@ -5,7 +5,7 @@ import {
   mergeRows,
   type ChatRow,
 } from '../src/chat/reaction-sync';
-import type { ChatMessage, ChatMessageEvent } from '../src/chat';
+import type { ChatMessage, ChatMessageEvent } from '../src/chat/realtime-client';
 
 const message = (id: string, sparks = 0, extra: Partial<ChatMessage> = {}): ChatMessage => ({
   id,

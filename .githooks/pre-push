@@ -18,10 +18,4 @@ npm run test:root
 python3 -m unittest discover -s tests/security -p 'test_*.py'
 npm run server:test
 npx jest --coverage
-for fixture in tests/deploy/backup-manifest.test.sh tests/deploy/wake-recovery-selection.test.sh \
-  tests/deploy/lifecycle-guards.test.sh tests/deploy/recovery-smoke.test.sh \
-  tests/deploy/restore-atomic.test.sh tests/deploy/ownership-contract.test.sh \
-  tests/deploy/host-preflight.test.sh deploy/tests/host-bootstrap.test.sh \
-  tests/deploy/*release*.test.sh deploy/tests/*release*.test.sh; do
-  if [ -f "$fixture" ]; then bash "$fixture"; fi
-done
+bash tests/deploy/run-fixtures.sh

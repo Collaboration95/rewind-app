@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Prepare preserves/inventories retained data and installs tools without starting writers
+        description: Install, preserve without startup, or reconcile PostgreSQL and wait for its reviewed Terraform cutover
         type: choice
-        options: [install, prepare]
+        options: [install, prepare, cutover]
         default: install
 
 concurrency:
@@ -69,7 +69,7 @@ jobs:
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     name: Deploy main to the release host
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: release
     steps:
       - name: Check out the main commit
@@ -229,6 +229,7 @@ jobs:
             "ubuntu@$REWIND_HOST_IP:/tmp/"
 
       - name: Apply hosted settings
+        if: ${{ inputs.operation != 'cutover' }}
         env:
           # Repository variable set from `terraform output hosted_env_uri`.
           REWIND_HOSTED_ENV_URI: ${{ vars.REWIND_RELEASE_HOSTED_ENV_URI }}
@@ -252,8 +253,16 @@ jobs:
       - name: Install the release on the host
         env:
           RELEASE_OPERATION: ${{ inputs.operation || 'install' }}
+          REWIND_HOSTED_ENV_URI: ${{ vars.REWIND_RELEASE_HOSTED_ENV_URI }}
+          REWIND_DATABASE_BOOTSTRAP_URI: ${{ vars.REWIND_DATABASE_BOOTSTRAP_URI }}
         run: |
           set -Eeuo pipefail
+          if [ "$RELEASE_OPERATION" = cutover ]; then
+            REWIND_RELEASE_BUNDLE_SHA256="$(sha256sum "$RUNNER_TEMP/rewind-release.tar" | cut -d ' ' -f 1)"
+            export REWIND_RELEASE_BUNDLE_SHA256
+            bash deploy/release-cutover.sh reconcile
+            exit 0
+          fi
           # The host keeps its own private /srv/rewind/rewind.env; a deploy
           # never rewrites it, so the recorded configuration digest must match.
           # shellcheck disable=SC2086
@@ -267,13 +276,42 @@ jobs:
             exit "$status"
           '
 
+      - name: Export the final reconciliation receipt
+        if: ${{ inputs.operation == 'cutover' }}
+        run: |
+          set -Eeuo pipefail
+          # Expose only table hashes/counts and manifest identity, never settings.
+          # The coordinator can download this while the next step waits.
+          # shellcheck disable=SC2086
+          ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" \
+            'cat /srv/rewind/database-reconciled.json' > "$RUNNER_TEMP/release-cutover-receipt.json"
+          jq -e '.environment == "release" and .finalSnapshot == true and (.reconciliation.tables | length > 0)' \
+            "$RUNNER_TEMP/release-cutover-receipt.json" >/dev/null
+
+      - name: Upload the final reconciliation receipt
+        if: ${{ inputs.operation == 'cutover' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-cutover-receipt
+          path: ${{ runner.temp }}/release-cutover-receipt.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Wait for Terraform cutover and activate PostgreSQL
+        if: ${{ inputs.operation == 'cutover' }}
+        env:
+          REWIND_HOSTED_ENV_URI: ${{ vars.REWIND_RELEASE_HOSTED_ENV_URI }}
+          REWIND_DATABASE_BOOTSTRAP_URI: ${{ vars.REWIND_DATABASE_BOOTSTRAP_URI }}
+        run: bash deploy/release-cutover.sh activate
+
       - name: Verify the public health endpoint
         if: ${{ inputs.operation != 'prepare' }}
         run: |
           set -Eeuo pipefail
           for _ in $(seq 1 30); do
-            if curl -fsS "http://$REWIND_HOST_IP/api/health" >/dev/null; then
-              echo "Deployed release is healthy at http://$REWIND_HOST_IP/api/health."
+            if curl -fsS 'https://d2r0xzy7vz590e.cloudfront.net/api/health' |
+              jq -e '.ok == true and .ready == true' >/dev/null; then
+              echo 'Deployed release is healthy through release CloudFront HTTPS.'
               exit 0
             fi
             sleep 5
@@ -286,6 +324,10 @@ jobs:
         continue-on-error: true
         run: |
           set -Eeuo pipefail
+          if [ -n "${REWIND_SSH_OPTS:-}" ] && [ -n "${REWIND_HOST_IP:-}" ]; then
+            # shellcheck disable=SC2086
+            ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" 'rm -f /tmp/rewind-release.tar' || true
+          fi
           if [ -n "${REWIND_RUNNER_CIDR:-}" ] && [ -n "${REWIND_DEPLOY_INSTANCE:-}" ]; then
             aws lightsail close-instance-public-ports \
               --instance-name "$REWIND_DEPLOY_INSTANCE" \

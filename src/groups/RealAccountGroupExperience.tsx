@@ -1,166 +1,44 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
-import * as Clipboard from 'expo-clipboard';
-import { AppState, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState, type ReactNode } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
-import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links';
-import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
-import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
+import { type InviteLinkPayload } from '../invites/deep-links';
 import { RealAccountChatScreen } from '../chat/RealAccountChatScreen';
 import { useRealChatUnread } from '../chat/real-chat-client';
 import { useComposerKeyboard } from '../chat/use-composer-keyboard';
-import type { ContributionLedgerPage } from '../domain/contributions';
-import {
-  ContributionStatusProvider,
-  type ContributionStatus,
-} from '../capture/contribution-status';
-import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
-import { DEFAULT_CAPTURE_MODE, type PendingClipUpload } from '../domain/video';
-import {
-  createPrivateReminderClient,
-  type PrivateReminderClient,
-} from '../reminders/private-reminder-client';
-import { subscribeToReminderIntents } from '../reminders/reminder-intents';
-import { createRealAccountArchiveClient, rateLimitMessage } from '../auth/real-account-client';
+import { createRealAccountArchiveClient } from '../auth/real-account-client';
 import { ArchiveScreen } from '../real/Archive';
 import { FilmScreen } from '../real/Film';
-import { markEnd, markLaunchReady, markStart } from '../runtime/timing';
-import { CreateGroupScreen, JoinScreen, type NewGroupInput } from '../real/GroupFlows';
+import { CreateGroupScreen, JoinScreen } from '../real/GroupFlows';
 import { HomeBody, HomeState, LoadingState } from '../real/Home';
 import {
-  awaitingServer,
   cycleWeek,
   filmCountdown,
   homeCards,
   momentDay,
-  nextBoundary,
   premiereLeft,
   premiereRelease,
   shutterState,
 } from '../real/home-model';
 import { MomentsScreen, weekMoments } from '../real/Moments';
-import { listBlocked } from '../real/safety';
-import { SettingsScreen, type SettingsStep } from '../real/Settings';
-import {
-  Dock,
-  GroupMenu,
-  ScreenFades,
-  TabColumn,
-  TopBar,
-  type MenuGroup,
-  type ShellTab,
-} from '../real/Shell';
-import { Button, Glass, Glow, rw, useNow, useScreenInsets, useToast } from '../ui/primitives';
-import { FONT, LAYOUT, WARM } from '../ui/tokens';
-import { userMessage } from '../domain/user-message';
+import { SettingsScreen } from '../real/Settings';
+import { Dock, GroupMenu, ScreenFades, TabColumn, TopBar, type MenuGroup } from '../real/Shell';
+import { Glow, rw, useNow, useScreenInsets, useToast } from '../ui/primitives';
+import { LAYOUT, WARM } from '../ui/tokens';
+import { GroupCaptureView } from './GroupCaptureView';
+import { GroupNotices, signOutNoticeFor } from './GroupNotices';
+import { displayInviteCode, type RealGroup } from './real-group-model';
+import { useBlockedMembers } from './use-blocked-members';
+import { useContributionLedger } from './use-contribution-ledger';
+import { useGroupCapture } from './use-group-capture';
+import { useGroupContextRefs } from './use-group-context-refs';
+import { useGroupLoader } from './use-group-loader';
+import { useGroupMembershipFlows } from './use-group-membership-flows';
+import { useGroupNavigation } from './use-group-navigation';
+import { useGroupRefresh } from './use-group-refresh';
+import { useGroupReminders, useReminderIntentRouting } from './use-group-reminders';
 
-type PhotoJobStatus = PendingClipUpload['job']['status'];
-type PhotoStatusDetails = Pick<
-  ContributionStatus,
-  'contributionId' | 'createdAt' | 'durationSeconds' | 'jobId'
->;
-
-export function photoContributionStatusForJob(
-  status: PhotoJobStatus,
-  details: PhotoStatusDetails,
-): ContributionStatus {
-  if (status === 'ready') return { state: 'sealed', ...details, retryable: false };
-  if (status === 'failed' || status === 'cancelled') {
-    return {
-      state: 'failed',
-      ...details,
-      message: 'The photo could not be processed. Retry this contribution.',
-      retryable: true,
-    };
-  }
-  return {
-    state: status === 'pending' ? 'queued' : 'processing',
-    ...details,
-    retryable: false,
-  };
-}
-
-interface RealInvite extends InviteLinkPayload {
-  id: string;
-  groupId: string;
-  status: 'active';
-  createdAt: string;
-}
-
-function displayInviteCode(code: string): string {
-  const normalized = code.replace(/[\s-]/g, '').toUpperCase();
-  return /^[A-Z]{6}$/.test(normalized)
-    ? `${normalized.slice(0, 3)}-${normalized.slice(3)}`
-    : normalized;
-}
-
-interface RealGroup {
-  memberId?: string;
-  group: {
-    id: string;
-    name: string;
-    role: 'owner' | 'member';
-    maxMembers: number;
-    timeZone?: string;
-  };
-  cycle: {
-    id: string;
-    prompt: string;
-    startsAt: string;
-    endsAt: string;
-    quota: { maxCount: number; maxSeconds: number };
-    contributionUsage: { countUsed: number; secondsUsed: number };
-    contributionCount: number;
-  };
-  releases?: RealGroupRelease[];
-}
-
-interface RealGroupRelease {
-  cycleId: string;
-  endsAt: string;
-  publishedAt: string | null;
-  state: 'processing' | 'delayed' | 'premiere' | 'archived';
-}
-
-interface RealGroupMembers {
-  group: { id: string; name: string };
-  members: { memberId: string; displayName: string; role: 'owner' | 'member'; joinedAt: string }[];
-  pendingInviteCount: number;
-}
-
-async function readGroup(response: Response): Promise<RealGroup | null> {
-  if (!response.ok) throw new Error('Your group could not be loaded. Retry when connected.');
-  const body = (await response.json()) as { group?: RealGroup | null };
-  return body.group ?? null;
-}
-
-async function readGroupMembers(response: Response): Promise<RealGroupMembers> {
-  if (!response.ok) throw new Error('Group members could not be loaded. Retry when connected.');
-  return (await response.json()) as RealGroupMembers;
-}
-
-// Reconcile just after a boundary so the server has crossed it too.
-const BOUNDARY_SLACK_MS = 1_000;
-const MAX_TIMER_MS = 2 ** 31 - 1;
-// While a film is developing or the server is behind, poll gently and give up.
-const CATCH_UP_POLL_MS = 30_000;
-const CATCH_UP_POLL_LIMIT = 20;
-
-type Push =
-  | { kind: 'settings'; step: SettingsStep }
-  | { kind: 'mine' }
-  | { kind: 'capture' }
-  | { kind: 'join' }
-  | { kind: 'create' }
-  | { kind: 'film'; cycleId: string; label: string };
+export { photoContributionStatusForJob } from './photo-submit';
 
 export function RealAccountGroupExperience({
   displayName,
@@ -174,524 +52,62 @@ export function RealAccountGroupExperience({
   const toast = useToast();
   const insets = useScreenInsets();
   const now = useNow();
+  const refs = useGroupContextRefs();
   const [group, setGroup] = useState<RealGroup | null>(null);
-  const [transferMode, setTransferMode] = useState<'server' | 'direct'>('server');
-  const mediaClient = useMemo(
-    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest, { transferMode }),
-    [auth.authenticatedRequest, transferMode],
-  );
-  const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
-  const ledgerGroupId = group?.group.id ?? null;
-  // Keyed by group id, not the snapshot, so a quiet refresh never re-hydrates the status provider.
-  const loadContributionLedger = useCallback(
-    () =>
-      ledgerGroupId
-        ? mediaClient.getContributionLedger(ledgerGroupId)
-        : Promise.reject(new Error('No active group.')),
-    [ledgerGroupId, mediaClient],
-  );
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
-  const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
-  const [groupMembersError, setGroupMembersError] = useState<string | null>(null);
-  const groupContextVersion = useRef(0);
-  const groupMembersRequest = useRef(0);
-  const groupMutationPending = useRef(false);
-  const selectedGroupId = useRef<string | null>(null);
   const [screen, setScreen] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [tab, setTab] = useState<ShellTab>('home');
-  const [stack, setStack] = useState<Push[]>([]);
-  const top = stack[stack.length - 1] ?? null;
+  const [message, setMessage] = useState<string | null>(null);
+  const {
+    tab,
+    setTab,
+    stack,
+    setStack,
+    top,
+    pushScreen,
+    popScreen,
+    replaceScreen,
+    menuOpen,
+    setMenuOpen,
+    goHome,
+  } = useGroupNavigation();
   const chatKeyboard = useComposerKeyboard(tab === 'chat' && !top);
-  const pushScreen = useCallback((next: Push) => setStack((current) => [...current, next]), []);
-  const popScreen = useCallback(() => setStack((current) => current.slice(0, -1)), []);
-  const replaceScreen = (next: Push) => setStack((current) => [...current.slice(0, -1), next]);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const goHome = useCallback(() => {
-    setStack([]);
-    setTab('home');
-    setMenuOpen(false);
-  }, []);
   const [rollKey, setRollKey] = useState(0);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [joinFeedback, setJoinFeedback] = useState<string | null>(null);
-  const [joinedName, setJoinedName] = useState<string | null>(null);
-  const [blocked, setBlocked] = useState<Set<string>>(() => new Set());
   const [chatUnreadAtOpen, setChatUnreadAtOpen] = useState(0);
   const archiveClient = useMemo(
     () =>
       auth.baseUrl ? createRealAccountArchiveClient(auth.baseUrl, auth.authenticatedRequest) : null,
     [auth.authenticatedRequest, auth.baseUrl],
   );
-  const [ledger, setLedger] = useState<ContributionLedgerPage | null>(null);
-  const [ledgerError, setLedgerError] = useState<string | null>(null);
-  const ledgerRequest = useRef(0);
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [invite, setInvite] = useState<RealInvite | null>(null);
-  const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
-  const [invitePending, setInvitePending] = useState(false);
-  const [acceptPending, setAcceptPending] = useState(false);
-  const [capturePending, setCapturePending] = useState(false);
-  const captureRequest = useRef(0);
-  const captureMounted = useRef(true);
-  const captureAccount = useRef(auth.session?.account.id);
-  const [reminderRevision, setReminderRevision] = useState(0);
-  const reminderContext = useRef({
-    accountId: auth.session?.account.id,
-    request: auth.authenticatedRequest,
-    groupId: group?.group.id,
-    revision: reminderRevision,
+  const reminders = useGroupReminders({ group, refs });
+  const { reminderClient, signOut } = reminders;
+  useReminderIntentRouting({ refs, setMessage, setGroup, setScreen, goHome });
+  const { mediaClient, transferMode, captureMode, setCaptureMode, capturePending, openCapture } =
+    useGroupCapture({ group, topKind: top?.kind, refs, setMessage, setMenuOpen, pushScreen });
+  const { groupMembers, groupMembersError, loadGroupMembers, load } = useGroupLoader({
+    refs,
+    setGroup,
+    setMemberGroups,
+    setScreen,
+    setMessage,
   });
-  useLayoutEffect(() => {
-    reminderContext.current = {
-      accountId: auth.session?.account.id,
-      request: auth.authenticatedRequest,
-      groupId: group?.group.id,
-      revision: reminderRevision,
-    };
-  }, [auth.session?.account.id, auth.authenticatedRequest, group?.group.id, reminderRevision]);
-  const [reminderScope, setReminderScope] = useState<{
-    client: PrivateReminderClient;
-    accountId: string;
-    groupId: string;
-    request: typeof auth.authenticatedRequest;
-    revision: number;
-  } | null>(null);
-  const reminderClient =
-    reminderScope &&
-    reminderScope.accountId === auth.session?.account.id &&
-    reminderScope?.groupId === group?.group.id &&
-    reminderScope?.request === auth.authenticatedRequest &&
-    reminderScope?.revision === reminderRevision
-      ? reminderScope.client
-      : null;
-  useEffect(() => {
-    let active = true;
-    const accountId = auth.session?.account.id;
-    const groupId = group?.group.id;
-    if (!accountId || !groupId) return;
-    const request = auth.authenticatedRequest;
-    const version = groupContextVersion.current;
-    const client = createPrivateReminderClient({
-      accountId,
-      groupId,
-      authenticatedRequest: request,
-      isCurrentContext: () =>
-        captureMounted.current &&
-        version === groupContextVersion.current &&
-        reminderContext.current.accountId === accountId &&
-        reminderContext.current.request === request &&
-        reminderContext.current.groupId === groupId &&
-        reminderContext.current.revision === reminderRevision &&
-        selectedGroupId.current === groupId,
-    });
-    void Promise.resolve().then(() => {
-      if (active)
-        setReminderScope({ client, accountId, groupId, request, revision: reminderRevision });
-    });
-    return () => {
-      active = false;
-      void client.revoke();
-    };
-  }, [auth.session?.account.id, auth.authenticatedRequest, group?.group.id, reminderRevision]);
-
-  const revokeReminderBeforeGroupChange = async () => {
-    const accountId = auth.session?.account.id;
-    const request = auth.authenticatedRequest;
-    const groupId = selectedGroupId.current;
-    const version = groupContextVersion.current;
-    if (!reminderClient) {
-      if (auth.session?.account.id && group)
-        throw new Error('Device reminder support is still being checked. Retry shortly.');
-      return;
-    }
-    const result = await reminderClient.revoke();
-    if (
-      !captureMounted.current ||
-      reminderContext.current.accountId !== accountId ||
-      reminderContext.current.request !== request ||
-      selectedGroupId.current !== groupId ||
-      groupContextVersion.current !== version
-    )
-      throw new Error('Your group context changed. Open the current group and retry.');
-    if (result.state !== 'revoked')
-      throw new Error('Device reminder removal is unconfirmed. Check reminder support and retry.');
-  };
-  const signOut = () => {
-    const context = reminderContext.current;
-    const version = groupContextVersion.current;
-    // Fence pending opt-ins immediately. Server session revocation stops sends;
-    // a network-dependent device cleanup must not delay native privacy closure.
-    const removal = reminderClient?.revoke();
-    void Promise.allSettled([removal, auth.signOut()]).then(() => {
-      // Browser revocation or native recovery-marker persistence can fail and
-      // retain this session. Replace its closed client after cleanup settles;
-      // durable unconfirmed-removal metadata is recovered by the new client.
-      if (
-        captureMounted.current &&
-        groupContextVersion.current === version &&
-        reminderContext.current.accountId === context.accountId &&
-        reminderContext.current.request === context.request &&
-        reminderContext.current.groupId === context.groupId &&
-        reminderContext.current.revision === context.revision
-      )
-        setReminderRevision((revision) => revision + 1);
-    });
-  };
-  const currentMutationAccount = () =>
-    captureMounted.current &&
-    reminderContext.current.accountId === auth.session?.account.id &&
-    reminderContext.current.request === auth.authenticatedRequest;
-  useEffect(() => {
-    let active = true;
-    const request = auth.authenticatedRequest;
-    const accountId = auth.session?.account.id;
-    if (!accountId) return;
-    const unsubscribe = subscribeToReminderIntents(async (intent) => {
-      const context = groupContextVersion.current;
-      try {
-        const response = await request('/real/groups/current');
-        const current = await readGroup(response);
-        if (
-          !active ||
-          !captureMounted.current ||
-          context !== groupContextVersion.current ||
-          reminderContext.current.accountId !== accountId ||
-          reminderContext.current.request !== request
-        )
-          return;
-        if (
-          current?.group.id === intent.groupId &&
-          (!selectedGroupId.current || selectedGroupId.current === intent.groupId)
-        ) {
-          selectedGroupId.current = current.group.id;
-          setMessage(null);
-          setGroup(current);
-          setScreen('ready');
-          goHome();
-        } else {
-          setMessage('This reminder is for another group. Choose a group you belong to.');
-        }
-      } catch {
-        if (
-          active &&
-          captureMounted.current &&
-          context === groupContextVersion.current &&
-          reminderContext.current.accountId === accountId &&
-          reminderContext.current.request === request
-        )
-          setMessage('Your reminder could not be opened. Reconnect and check your current group.');
-      }
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [auth.session?.account.id, auth.authenticatedRequest, goHome]);
-
-  useEffect(() => {
-    captureMounted.current = true;
-    return () => {
-      captureMounted.current = false;
-      captureRequest.current += 1;
-    };
-  }, []);
-  useEffect(() => {
-    captureAccount.current = auth.session?.account.id;
-  }, [auth.session?.account.id]);
-  useEffect(() => () => mediaClient.dispose(), [mediaClient]);
-  useEffect(() => {
-    if (top?.kind !== 'capture') mediaClient.cancelDirectTransfers();
-    return () => mediaClient.cancelDirectTransfers();
-  }, [mediaClient, top?.kind, group?.group.id, auth.session?.account.id]);
-
-  const openCapture = async () => {
-    if (!group) return;
-    const request = ++captureRequest.current;
-    const context = groupContextVersion.current;
-    const groupId = group.group.id;
-    const accountId = auth.session?.account.id;
-    setCapturePending(true);
-    setMessage(null);
-    try {
-      const response = await auth.authenticatedRequest('/real/media/config?uploadProtocol=2');
-      let mode: 'server' | 'direct' = 'server';
-      if (response.status !== 404) {
-        if (!response.ok)
-          throw new Error(
-            'Capture settings are unavailable. Reconnect or sign in again, then retry.',
-          );
-        const config = (await response.json()) as { directTransfer?: unknown };
-        if (typeof config.directTransfer !== 'boolean')
-          throw new Error('Capture settings could not be verified. Retry when connected.');
-        mode = config.directTransfer ? 'direct' : 'server';
-      }
-      if (
-        !captureMounted.current ||
-        request !== captureRequest.current ||
-        context !== groupContextVersion.current ||
-        selectedGroupId.current !== groupId ||
-        captureAccount.current !== accountId
-      )
-        return;
-      setTransferMode(mode);
-      setMenuOpen(false);
-      pushScreen({ kind: 'capture' });
-    } catch (error) {
-      if (
-        captureMounted.current &&
-        request === captureRequest.current &&
-        context === groupContextVersion.current
-      )
-        setMessage(userMessage(error, 'Capture settings are unavailable. Retry when connected.'));
-    } finally {
-      if (captureMounted.current && request === captureRequest.current) setCapturePending(false);
-    }
-  };
-
-  const loadGroupMembers = useCallback(
-    async (groupId: string, contextVersion: number, quiet = false) => {
-      if (contextVersion !== groupContextVersion.current || selectedGroupId.current !== groupId)
-        return;
-      const requestId = ++groupMembersRequest.current;
-      // A quiet refresh keeps the current list on screen until the new one arrives.
-      if (!quiet) {
-        setGroupMembers(null);
-        setGroupMembersError(null);
-      }
-      try {
-        const response = await auth.authenticatedRequest(
-          `/real/groups/${encodeURIComponent(groupId)}/members`,
-        );
-        const summary = await readGroupMembers(response);
-        if (summary.group.id !== groupId)
-          throw new Error('Group members could not be matched to the selected group.');
-        if (
-          contextVersion === groupContextVersion.current &&
-          selectedGroupId.current === groupId &&
-          requestId === groupMembersRequest.current
-        )
-          setGroupMembers(summary);
-      } catch (error) {
-        if (
-          !quiet &&
-          contextVersion === groupContextVersion.current &&
-          selectedGroupId.current === groupId &&
-          requestId === groupMembersRequest.current
-        )
-          setGroupMembersError(userMessage(error, 'Group members could not be loaded.'));
-      }
-    },
-    [auth],
-  );
-
-  const load = useCallback(async () => {
-    const contextVersion = groupContextVersion.current;
-    markStart('home-load');
-    try {
-      const [currentResponse, membershipsResponse] = await Promise.all([
-        auth.authenticatedRequest('/real/groups/current'),
-        auth.authenticatedRequest('/real/groups'),
-      ]);
-      const result = await readGroup(currentResponse);
-      if (!membershipsResponse.ok)
-        throw new Error('Your groups could not be loaded. Retry when connected.');
-      const memberships = (await membershipsResponse.json()) as { groups?: RealGroup[] };
-      if (contextVersion !== groupContextVersion.current) return;
-      setMemberGroups(memberships.groups ?? []);
-      selectedGroupId.current = result?.group.id ?? null;
-      setGroup(result);
-      setScreen('ready');
-      markEnd('home-load');
-      markLaunchReady();
-      if (result) await loadGroupMembers(result.group.id, contextVersion);
-      else {
-        groupMembersRequest.current += 1;
-        setGroupMembers(null);
-        setGroupMembersError(null);
-      }
-    } catch (error) {
-      if (contextVersion !== groupContextVersion.current) return;
-      setMessage(userMessage(error, 'Your group could not be loaded.'));
-      setScreen('error');
-    }
-  }, [auth, loadGroupMembers]);
-
-  useEffect(() => {
-    void Promise.resolve().then(load);
-  }, [load]);
-
-  const accountId = auth.session?.account.id ?? null;
-  const ledgerOwner = ledgerGroupId ? `${accountId}:${ledgerGroupId}` : null;
-  const ledgerOwnerRef = useRef<string | null>(null);
-  const ledgerInflight = useRef<{
-    id: number;
-    promise: Promise<ContributionLedgerPage | null>;
-  } | null>(null);
-  // `join` shares a request already in flight; the default always asks again.
-  const refreshLedger = useCallback(
-    (join = false): Promise<ContributionLedgerPage | null> => {
-      if (!ledgerGroupId) return Promise.resolve(null);
-      if (join && ledgerInflight.current) return ledgerInflight.current.promise;
-      const requestId = ++ledgerRequest.current;
-      const current = () =>
-        requestId === ledgerRequest.current &&
-        selectedGroupId.current === ledgerGroupId &&
-        ledgerOwnerRef.current === ledgerOwner;
-      const promise = (async () => {
-        try {
-          const page = await mediaClient.getContributionLedger(ledgerGroupId);
-          if (!current()) return null;
-          setLedger(page);
-          setLedgerError(null);
-          return page;
-        } catch {
-          // The last confirmed allowance stays; clearing it would make the shutter look ready.
-          if (current()) setLedgerError('Your moments could not be loaded. Retry when connected.');
-          return null;
-        } finally {
-          if (ledgerInflight.current?.id === requestId) ledgerInflight.current = null;
-        }
-      })();
-      ledgerInflight.current = { id: requestId, promise };
-      return promise;
-    },
-    [ledgerGroupId, ledgerOwner, mediaClient],
-  );
-  useEffect(() => {
-    void Promise.resolve().then(() => {
-      if (ledgerOwnerRef.current !== ledgerOwner) {
-        ledgerOwnerRef.current = ledgerOwner;
-        setLedger(null);
-        setLedgerError(null);
-      }
-      return refreshLedger();
-    });
-  }, [ledgerOwner, refreshLedger]);
-
-  const latestGroup = useRef(group);
-  const groupRefresh = useRef<{ id: number; promise: Promise<void> } | null>(null);
-  const groupRefreshId = useRef(0);
-  const capturing = useRef(false);
-  const [refreshFailed, setRefreshFailed] = useState(false);
-  useLayoutEffect(() => {
-    latestGroup.current = group;
-    capturing.current = top?.kind === 'capture';
-  });
-  // Quietly re-read the current group (cycle, releases) without touching the screen.
-  // A newer request supersedes an older one, and `force` skips joining one in flight.
-  const refreshGroup = useCallback(
-    (force = false): Promise<void> => {
-      const groupId = selectedGroupId.current;
-      if (!groupId || groupMutationPending.current) return Promise.resolve();
-      if (!force && groupRefresh.current) return groupRefresh.current.promise;
-      const contextVersion = groupContextVersion.current;
-      const request = auth.authenticatedRequest;
-      const requestId = ++groupRefreshId.current;
-      const current = () =>
-        captureMounted.current &&
-        requestId === groupRefreshId.current &&
-        contextVersion === groupContextVersion.current &&
-        selectedGroupId.current === groupId &&
-        reminderContext.current.accountId === accountId &&
-        reminderContext.current.request === request;
-      const promise = (async () => {
-        try {
-          const refreshed = await readGroup(await request('/real/groups/current'));
-          if (!current()) return;
-          if (refreshed?.group.id !== groupId) {
-            // Removed from the group, or the server selects another: reload as a fresh start would.
-            groupContextVersion.current += 1;
-            goHome();
-            void load();
-            return;
-          }
-          if (latestGroup.current?.cycle.id !== refreshed.cycle.id) void refreshLedger();
-          setGroup((previous) =>
-            previous && JSON.stringify(previous) === JSON.stringify(refreshed)
-              ? previous
-              : refreshed,
-          );
-          setRefreshFailed(false);
-        } catch {
-          if (current()) setRefreshFailed(true);
-        } finally {
-          if (groupRefresh.current?.id === requestId) groupRefresh.current = null;
-        }
-      })();
-      groupRefresh.current = { id: requestId, promise };
-      return promise;
-    },
-    [accountId, auth.authenticatedRequest, goHome, load, refreshLedger],
-  );
-  // Group and allowance together. An open capture keeps its screen and state; closing it reconciles.
-  const reconcile = (force = false): Promise<unknown> =>
-    screen !== 'ready' || capturing.current
-      ? Promise.resolve()
-      : Promise.all([refreshGroup(force), refreshLedger(!force)]);
-  const reconcileRef = useRef(reconcile);
-  const refreshGroupRef = useRef(refreshGroup);
-  useLayoutEffect(() => {
-    reconcileRef.current = reconcile;
-    refreshGroupRef.current = refreshGroup;
+  const { ledger, ledgerError, ledgerOwner, loadContributionLedger, refreshLedger } =
+    useContributionLedger({ groupId: group?.group.id ?? null, mediaClient, refs });
+  const { refreshGroup, reconcile, refreshFailed } = useGroupRefresh({
+    group,
+    screen,
+    captureOpen: top?.kind === 'capture',
+    now,
+    refs,
+    goHome,
+    load,
+    refreshLedger,
+    ledgerOwner,
+    setGroup,
   });
 
-  const [foregroundCount, setForegroundCount] = useState(0);
-  useEffect(() => {
-    let previous = AppState.currentState;
-    const subscription = AppState.addEventListener('change', (next) => {
-      if (next === 'active' && (previous === 'background' || previous === 'inactive')) {
-        setForegroundCount((count) => count + 1);
-        void reconcileRef.current();
-      }
-      previous = next;
-    });
-    return () => subscription.remove();
-  }, []);
-
-  const boundary = group ? nextBoundary(group.cycle, group.releases, now) : null;
-  useEffect(() => {
-    if (boundary === null) return;
-    let timer: ReturnType<typeof setTimeout>;
-    const arm = () => {
-      const wait = boundary + BOUNDARY_SLACK_MS - Date.now();
-      timer =
-        wait > MAX_TIMER_MS
-          ? setTimeout(arm, MAX_TIMER_MS)
-          : setTimeout(() => void reconcileRef.current(true), Math.max(0, wait));
-    };
-    arm();
-    return () => clearTimeout(timer);
-  }, [boundary, ledgerOwner]);
-
-  const catchingUp = group ? awaitingServer(group.cycle, group.releases, now) : false;
-  useEffect(() => {
-    if (!catchingUp || !ledgerOwner) return;
-    let attempts = 0;
-    const timer = setInterval(() => {
-      if (attempts >= CATCH_UP_POLL_LIMIT) return clearInterval(timer);
-      if (AppState.currentState === 'background' || capturing.current) return;
-      attempts += 1;
-      void refreshGroupRef.current();
-    }, CATCH_UP_POLL_MS);
-    return () => clearInterval(timer);
-  }, [catchingUp, ledgerOwner, foregroundCount]);
-
-  // Blocked people are fetched when Members opens; the server already hides
-  // their messages and moments everywhere else.
-  const membersOpen = top?.kind === 'settings' && top.step === 'members';
-  useEffect(() => {
-    if (!membersOpen) return;
-    let active = true;
-    void listBlocked(auth.authenticatedRequest)
-      .then((ids) => {
-        if (active) setBlocked(ids);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [auth.authenticatedRequest, membersOpen]);
+  const [blocked, setBlocked] = useBlockedMembers(
+    top?.kind === 'settings' && top.step === 'members',
+  );
 
   const closeCapture = () => {
     const before = ledger?.allowance.countUsed ?? 0;
@@ -703,316 +119,52 @@ export function RealAccountGroupExperience({
     });
   };
 
-  const create = async ({ name: cleanName, prompt: cleanPrompt, maxMembers }: NewGroupInput) => {
-    if (groupMutationPending.current) return;
-    groupMutationPending.current = true;
-    setPending(true);
-    setCreateError(null);
-    try {
-      await revokeReminderBeforeGroupChange();
-      const response = await auth.authenticatedRequest('/real/groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cleanName, prompt: cleanPrompt, maxMembers }),
-      });
-      if (!response.ok)
-        throw new Error(
-          await rateLimitMessage(
-            response,
-            'The group could not be created. Check the details and retry.',
-          ),
-        );
-      const created = (await response.json()) as RealGroup;
-      if (!currentMutationAccount()) return;
-      const contextVersion = ++groupContextVersion.current;
-      selectedGroupId.current = created.group.id;
-      setGroup(created);
-      setMemberGroups((current) => [...current, created]);
-      setScreen('ready');
-      goHome();
-      toast(`Created “${created.group.name}”.`);
-      await loadGroupMembers(created.group.id, contextVersion);
-    } catch (error) {
-      if (currentMutationAccount())
-        setCreateError(userMessage(error, 'The group could not be created.'));
-    } finally {
-      groupMutationPending.current = false;
-      if (currentMutationAccount()) {
-        setPending(false);
-        setReminderRevision((value) => value + 1);
-      }
-    }
-  };
-
-  const createInvitation = async () => {
-    if (!group || group.group.role !== 'owner') return;
-    setInvitePending(true);
-    setInviteFeedback(null);
-    try {
-      const response = await auth.authenticatedRequest(
-        `/real/groups/${encodeURIComponent(group.group.id)}/invites`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
-      );
-      const body = (await response.json()) as { invite?: RealInvite; message?: string };
-      if (!response.ok || !body.invite) {
-        throw new Error(
-          body.message ?? 'The invitation could not be created. Retry when connected.',
-        );
-      }
-      setInvite(body.invite);
-    } catch (error) {
-      setInviteFeedback(userMessage(error, 'The invitation could not be created.'));
-    } finally {
-      setInvitePending(false);
-    }
-  };
-
-  const revokeInvitation = async () => {
-    if (!group || !invite || group.group.role !== 'owner' || invitePending) return;
-    setInvitePending(true);
-    setInviteFeedback(null);
-    try {
-      const response = await auth.authenticatedRequest(
-        `/real/groups/${encodeURIComponent(group.group.id)}/invites/${encodeURIComponent(invite.id)}`,
-        { method: 'DELETE' },
-      );
-      if (!response.ok) throw new Error('The invitation could not be revoked. Try again.');
-      setInvite(null);
-      toast('Code revoked. Make a new one when you need it.');
-      await loadGroupMembers(group.group.id, groupContextVersion.current);
-    } catch (error) {
-      setInviteFeedback(userMessage(error, 'The invitation could not be revoked.'));
-    } finally {
-      setInvitePending(false);
-    }
-  };
-
-  const copyInvitation = async () => {
-    if (!invite) return;
-    try {
-      await Clipboard.setStringAsync(displayInviteCode(invite.code));
-      setInviteFeedback(null);
-      toast('Invitation code copied.');
-    } catch {
-      setInviteFeedback('Copy is unavailable here. Select the invitation code to copy it.');
-    }
-  };
-
-  const shareInvitation = async () => {
-    if (!invite) return;
-    try {
-      // On the web the link opens Rewind with the invitation filled in.
-      const link =
-        Platform.OS === 'web' && typeof window !== 'undefined'
-          ? createInviteLink(invite, {
-              platform: 'web',
-              webOrigin: window.location.origin,
-              groupId: invite.groupId,
-            })
-          : null;
-      await Share.share({
-        message: `Join my Rewind group with code ${displayInviteCode(invite.code)}. ${
-          link ?? 'Open Rewind and choose Have an invite?'
-        }`,
-      });
-      setInviteFeedback(null);
-    } catch {
-      setInviteFeedback('Share is unavailable here. Copy the invitation code to share it.');
-    }
-  };
-
-  const acceptInvitation = async (rawCode: string, requestedGroupId?: string) => {
-    if (acceptPending || groupMutationPending.current) return;
-    const code = rawCode.replace(/[\s-]/g, '').toUpperCase();
-    if (!/^(?:[A-Z]{6}|[A-Z0-9]{8})$/.test(code)) {
-      setJoinFeedback('Enter the six-letter invitation code, like ABC-DEF.');
-      return;
-    }
-    groupMutationPending.current = true;
-    setAcceptPending(true);
-    setJoinFeedback(null);
-    try {
-      await revokeReminderBeforeGroupChange();
-      const response = await auth.authenticatedRequest('/real/invites/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, ...(requestedGroupId ? { groupId: requestedGroupId } : {}) }),
-      });
-      const body = (await response.json()) as {
-        status?: string;
-        group?: RealGroup;
-        message?: string;
-      };
-      if (!response.ok || !body.group) {
-        throw new Error(body.message ?? 'The invitation could not be accepted.');
-      }
-      if (!currentMutationAccount()) return;
-      const contextVersion = ++groupContextVersion.current;
-      selectedGroupId.current = body.group.group.id;
-      setGroup(body.group);
-      setInvite(null);
-      await loadGroupMembers(body.group.group.id, contextVersion);
-      setMemberGroups((current) =>
-        current.some((membership) => membership.group.id === body.group?.group.id)
-          ? current
-          : [...current, body.group!],
-      );
-      setScreen('ready');
-      if (requestedGroupId) goHome();
-      else setJoinedName(body.group.group.name);
-    } catch (error) {
-      if (currentMutationAccount())
-        setJoinFeedback(userMessage(error, 'The invitation could not be accepted.'));
-    } finally {
-      groupMutationPending.current = false;
-      if (currentMutationAccount()) {
-        setAcceptPending(false);
-        setReminderRevision((value) => value + 1);
-      }
-    }
-  };
-
-  const switchGroup = async (groupId: string): Promise<boolean> => {
-    if (pending || acceptPending || groupMutationPending.current) return false;
-    groupMutationPending.current = true;
-    const previousGroupId = selectedGroupId.current;
-    let contextVersion = groupContextVersion.current;
-    setPending(true);
-    setMessage(null);
-    try {
-      await revokeReminderBeforeGroupChange();
-      contextVersion = ++groupContextVersion.current;
-      const response = await auth.authenticatedRequest('/real/groups/current', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId }),
-      });
-      const selected = await readGroup(response);
-      if (!selected) throw new Error('That group is not available to this account.');
-      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return false;
-      selectedGroupId.current = selected.group.id;
-      setGroup(selected);
-      setInvite(null);
-      setTab('home');
-      await loadGroupMembers(selected.group.id, contextVersion);
-      return true;
-    } catch (error) {
-      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return false;
-      setMessage(userMessage(error, 'The group could not be selected.'));
-      if (previousGroupId) await loadGroupMembers(previousGroupId, contextVersion);
-      return false;
-    } finally {
-      groupMutationPending.current = false;
-      if (currentMutationAccount()) {
-        if (contextVersion === groupContextVersion.current) setPending(false);
-        setReminderRevision((value) => value + 1);
-      }
-    }
-  };
+  const {
+    pending,
+    acceptPending,
+    createError,
+    setCreateError,
+    joinFeedback,
+    setJoinFeedback,
+    joinedName,
+    setJoinedName,
+    invite,
+    inviteFeedback,
+    invitePending,
+    create,
+    createInvitation,
+    revokeInvitation,
+    copyInvitation,
+    shareInvitation,
+    acceptInvitation,
+    switchGroup,
+  } = useGroupMembershipFlows({
+    group,
+    refs,
+    reminders,
+    loadGroupMembers,
+    goHome,
+    setGroup,
+    setMemberGroups,
+    setScreen,
+    setMessage,
+    setTab,
+  });
 
   const captureView = group ? (
-    <ContributionStatusProvider
-      scope={{
-        sessionId: 'real-account-session',
-        groupId: group.group.id,
-        memberId: auth.session?.account.id ?? '',
-      }}
-      loadStatus={loadContributionLedger}
-    >
-      {captureMode === 'photo' ? (
-        <CameraCaptureScreen
-          allowance={ledger?.allowance ?? null}
-          groupName={group.group.name}
-          onBack={closeCapture}
-          onRecordClip={() => setCaptureMode('video')}
-          onSubmitPhoto={async (
-            metadata,
-            base64,
-            onProgress,
-            replacesContributionId,
-            look = { mode: DEFAULT_CAPTURE_MODE, clientProcessed: false },
-          ) => {
-            if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
-              throw new Error('Photo contribution upload is unavailable. Retry shortly.');
-            }
-            const { mimeType } = metadata;
-            // Client-graded bytes differ per look, so each look gets its own key.
-            const idempotencyKey = look.clientProcessed
-              ? `${metadata.id}-${look.mode}`
-              : metadata.id;
-            const staged = await mediaClient.stagePhotoSource(
-              'real-account-session',
-              group.group.id,
-              idempotencyKey,
-              base64,
-              mimeType,
-            );
-            const upload = await mediaClient.uploadClip('real-account-session', group.group.id, {
-              mediaType: 'photo',
-              idempotencyKey,
-              sourceUri: staged.uri,
-              mimeType,
-              byteLength: staged.byteLength,
-              durationSeconds: 3,
-              width: metadata.width,
-              height: metadata.height,
-              hasAudio: true,
-              mode: look.mode,
-              ...(look.clientProcessed ? { clientProcessed: true } : {}),
-              trimStartSeconds: 0,
-              trimEndSeconds: 3,
-              ...(replacesContributionId ? { replacesContributionId } : {}),
-            });
-            const sharedStatus = {
-              contributionId: upload.contribution.id,
-              jobId: upload.job.id,
-              durationSeconds: 3,
-              createdAt: upload.contribution.createdAt,
-              retryable: true,
-            };
-            onProgress({ state: 'queued', ...sharedStatus });
-            onProgress({ state: 'processing', ...sharedStatus });
-            const job = await mediaClient.processClipJob(
-              'real-account-session',
-              group.group.id,
-              upload.job.id,
-            );
-            const finalStatus = photoContributionStatusForJob(job.status, sharedStatus);
-            onProgress(finalStatus);
-            if (finalStatus.state === 'failed') {
-              throw new Error(
-                finalStatus.message ?? 'The photo could not be processed. Retry this photo.',
-              );
-            }
-            return finalStatus;
-          }}
-          onDeletePhotoContribution={(contributionId) =>
-            mediaClient.deleteContribution('real-account-session', group.group.id, contributionId)
-          }
-        />
-      ) : (
-        <VideoCaptureScreen
-          allowance={ledger?.allowance ?? null}
-          onBack={() => setCaptureMode('photo')}
-          onClose={closeCapture}
-          realAccount={{
-            groupId: group.group.id,
-            authenticatedRequest: auth.authenticatedRequest,
-            transferMode,
-          }}
-        />
-      )}
-    </ContributionStatusProvider>
+    <GroupCaptureView
+      group={group}
+      allowance={ledger?.allowance ?? null}
+      mediaClient={mediaClient}
+      captureMode={captureMode}
+      setCaptureMode={setCaptureMode}
+      transferMode={transferMode}
+      loadContributionLedger={loadContributionLedger}
+      closeCapture={closeCapture}
+    />
   ) : null;
 
-  const signOutNotice =
-    auth.notice === 'sign-out-marker-unavailable'
-      ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-      : auth.notice === 'revocation-unconfirmed'
-        ? Platform.OS === 'web'
-          ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
-          : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'
-        : null;
+  const signOutNotice = signOutNoticeFor(auth.notice);
   const signOutLabel = auth.pending
     ? 'Signing out…'
     : signOutNotice
@@ -1062,54 +214,17 @@ export function RealAccountGroupExperience({
       onToggleMenu={() => setMenuOpen((open) => !open)}
     />
   );
-  const inviteIntentCard = inviteIntent ? (
-    <Glass style={styles.notice} testID="real-invite-intent">
-      <Text style={styles.noticeTitle}>You have an invitation</Text>
-      <Text style={styles.noticeBody}>
-        Expires {new Date(inviteIntent.expiresAt).toLocaleString()}. Accept it to join this private
-        group.
-      </Text>
-      <Button
-        busy={acceptPending}
-        busyLabel="Joining…"
-        label="Accept invitation"
-        onPress={() => void acceptInvitation(inviteIntent.code, inviteIntent.groupId)}
-        testID="real-invite-accept"
-        variant="primary"
-      />
-      {joinFeedback ? (
-        <Text accessibilityRole="alert" style={styles.noticeBody} testID="real-invite-feedback">
-          {joinFeedback}
-        </Text>
-      ) : null}
-    </Glass>
-  ) : null;
   const notices = (
-    <>
-      {inviteIntentCard}
-      {signOutNotice ? (
-        <Text accessibilityRole="alert" style={styles.alert} testID="logout-unconfirmed">
-          {signOutNotice}
-        </Text>
-      ) : null}
-      {message ? (
-        <Text accessibilityRole="alert" style={styles.alert} testID="real-group-switch-error">
-          {message}
-        </Text>
-      ) : null}
-      {group && (refreshFailed || ledgerError) ? (
-        <Glass style={styles.notice} testID="real-group-refresh-error">
-          <Text accessibilityRole="alert" style={styles.noticeBody}>
-            Couldn’t refresh your group. Showing your last update.
-          </Text>
-          <Button
-            label="Try again"
-            onPress={() => void reconcile(true)}
-            testID="real-group-refresh-retry"
-          />
-        </Glass>
-      ) : null}
-    </>
+    <GroupNotices
+      inviteIntent={inviteIntent}
+      acceptPending={acceptPending}
+      joinFeedback={joinFeedback}
+      onAcceptInvite={(code, groupId) => void acceptInvitation(code, groupId)}
+      signOutNotice={signOutNotice}
+      message={message}
+      refreshFailed={Boolean(group && (refreshFailed || ledgerError))}
+      onRetryRefresh={() => void reconcile(true)}
+    />
   );
 
   let body: ReactNode;
@@ -1169,7 +284,7 @@ export function RealAccountGroupExperience({
           onComposerFocus={chatKeyboard.onFocus}
           onComposerBlur={chatKeyboard.onBlur}
           onUnknownAuthor={() =>
-            void loadGroupMembers(group.group.id, groupContextVersion.current, true)
+            void loadGroupMembers(group.group.id, refs.groupContextVersionRef.current, true)
           }
         />
       </View>
@@ -1441,20 +556,4 @@ const styles = StyleSheet.create({
   pinnedHeader: { paddingHorizontal: LAYOUT.gutter },
   pushed: { ...StyleSheet.absoluteFill, zIndex: 10 },
   camera: { backgroundColor: '#000', flex: 1 },
-  notice: { gap: 8, marginBottom: 14, padding: 18 },
-  noticeTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 16, fontWeight: '600' },
-  noticeBody: { color: WARM.muted, fontFamily: FONT.body, fontSize: 13.5, lineHeight: 19 },
-  alert: {
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    borderColor: 'rgba(194, 69, 47, 0.35)',
-    borderRadius: 14,
-    borderWidth: 1,
-    color: '#6b2a1a',
-    fontFamily: FONT.body,
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
 });

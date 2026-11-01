@@ -1,0 +1,1010 @@
+{
+  "title": "Analysis to design",
+  "lede": "Six transition strategies turn Rewind’s boundary, control and entity analysis objects into concrete client modules, server operations and durable records.",
+  "intro": [
+    "The course template asks for the objects and use cases affected by each strategy, the static changes to a class diagram, and the dynamic changes to a sequence diagram, with reasons for both. The sections below provide that guidance; the model registers link every existing use-case class view and major-flow sequence pair.",
+    "This page checks the report models against the current refactor tree. Existing SVGs are earlier report snapshots: Demo lanes have been removed from the product, Cognito and PostgreSQL are implemented, routes live in `server/src/routes/`, migrations live in `server/src/schema.ts`, and screens have been split. The SVGs are linked for study and remain unchanged; the current mappings below explain how to read their older names. See [ownership](owners.html) and [pattern decisions](patterns.html)."
+  ],
+  "sections": [
+    {
+      "id": "objects-to-code",
+      "title": "From responsibilities to implementation",
+      "summary": "Analysis identifies who interacts, who coordinates and what the system remembers; design assigns those responsibilities to real code and storage.",
+      "paragraphs": [
+        "A **boundary** receives an actor’s input or presents a result: sign-in, camera, chat and Archive screens. A **control** coordinates a use case: authenticate, accept an invitation, reserve allowance or compile a film. An **entity** carries a domain fact: Account, Membership, Contribution, Cycle, Film or Message.",
+        "A design class diagram can represent a TypeScript interface, a class, a React component, a module of functions or a persisted record. Give it the actual implementation name and its kind. Do not turn every analysis noun into a new class: `acceptRealGroupInvite` and `advanceCycleLifecycleVerified` are functions, while `MediaCapabilities` and `RealtimeHub` are classes."
+      ],
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Refine a use case",
+          "steps": [
+            {
+              "label": "Actor request",
+              "sub": "Boundary",
+              "detail": "A screen or HTTP route accepts input. It does not make a client-supplied group or member ID authoritative."
+            },
+            {
+              "label": "Coordinate work",
+              "sub": "Control",
+              "detail": "A client session object, hook or server function orders validation, persistence and external work."
+            },
+            {
+              "label": "Persist facts",
+              "sub": "Entity",
+              "detail": "Domain types describe facts; database records preserve membership, quota, cycle state and queued work.",
+              "accent": true
+            },
+            {
+              "label": "Return outcome",
+              "sub": "Boundary",
+              "detail": "The response distinguishes success, denial, processing and retryable failure so the UI can show a truthful state."
+            }
+          ]
+        }
+      ],
+      "tables": [
+        {
+          "title": "Typical analysis-to-design mapping",
+          "columns": ["Analysis responsibility", "Current design element", "Why it changes"],
+          "rows": [
+            [
+              "Boundary: group settings",
+              "`src/real/Settings.tsx` and `src/real/settings/*`",
+              "Split presentation and editing flows; keep domain decisions on the server."
+            ],
+            [
+              "Control: accept invitation",
+              "`server/src/groups/invites.ts` functions, reached through `real-routes.ts`",
+              "Validate invitation and membership within the operation that writes the result."
+            ],
+            [
+              "Entity: membership",
+              "`real_group_memberships` plus profile/account IDs",
+              "Persist the account-to-group relationship; a resource ID alone gives no access."
+            ],
+            [
+              "Control: film compilation",
+              "`server/src/jobs/compilation.ts` and `server/src/jobs/worker.ts`",
+              "Replace a long request with durable work and recoverable processing."
+            ],
+            [
+              "Entity: Cycle",
+              "`server/src/cycles/engine.ts` and persisted `cycles` records",
+              "Make state, timing, locking and release facts explicit."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "server/src/routes/context.ts",
+          "label": "server/src/routes/context.ts",
+          "note": "Typed request contexts and route contracts."
+        },
+        {
+          "path": "server/src/schema.ts",
+          "label": "server/src/schema.ts",
+          "note": "Schema and migration responsibilities."
+        },
+        {
+          "path": "server/src/groups/invites.ts",
+          "label": "server/src/groups/invites.ts",
+          "note": "Function-based use-case control."
+        },
+        {
+          "path": "server/src/cycles/engine.ts",
+          "label": "server/src/cycles/engine.ts",
+          "note": "Cycle timing and phase types rather than an invented entity superclass."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is an analysis control necessarily a design class?",
+          "a": "No. It is a responsibility. A function, hook or module can implement it; the diagram should label the actual kind."
+        },
+        {
+          "q": "What must a design sequence add?",
+          "a": "Concrete participants, credentials, validation order, transaction boundaries, asynchronous work and relevant failure branches."
+        }
+      ]
+    },
+    {
+      "id": "t1-trusted-identity",
+      "title": "T1 · Establish trusted identity before group access",
+      "summary": "Refine Account and Membership into verified sessions and explicit account-to-group checks.",
+      "paragraphs": [
+        "**Analysis objects impacted:** the sign-in and group boundaries; authentication, group-selection and invitation controls; Account, Session, Group, Invitation and Membership entities. **Use cases:** UC01–UC03 directly, and the protected member flows in UC04–UC06 and UC09–UC14. UC07–UC08 are server-driven work rather than browser sign-in flows.",
+        "**Static change and rationale:** introduce `RealAccountProvider`, `RealAccountClient`, the `CognitoService` contract, auth routes, session records and real membership records. Keep account ID separate from a member’s group profile ID. Both Cognito and enabled developer password sign-in create Rewind sessions; neither bypasses group membership. This lets sign-in transport change without making resource IDs into credentials.",
+        "**Dynamic change and rationale:** for web sign-in, redirect through Cognito with state, nonce and PKCE; exchange the code and verify identity on the server; then issue an HttpOnly Rewind session cookie. Protected routes validate the session before resolving membership or ownership. Invitation acceptance checks expiry, replay, requested group and capacity in its membership transaction. Failures must return before the protected mutation.",
+        "**Current-code correction:** the old ACCESS figures show Demo policy and a future Cognito box. Demo authority is removed. `server/src/policy.ts` now defines the shared safe-denial value; it is not a universal Strategy implementation. Auth handlers are in `auth-routes.ts`, real groups in `real-routes.ts`, and selected-group media identity in `media-access.ts`."
+      ],
+      "notes": [
+        "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-design-class.svg); [older sign-in sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f2-design-sequence.svg). Read its password flow as developer sign-in; the current Cognito sequence is described above.",
+        "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-design-class.svg); [accept-invite sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f3-design-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "src/auth/RealAccountProvider.tsx",
+          "label": "src/auth/RealAccountProvider.tsx",
+          "note": "Client sign-in/session state."
+        },
+        {
+          "path": "server/src/routes/auth-routes.ts",
+          "label": "server/src/routes/auth-routes.ts",
+          "note": "Cognito start/callback, password gate and session endpoints."
+        },
+        {
+          "path": "server/src/auth/cognito.ts",
+          "label": "server/src/auth/cognito.ts",
+          "note": "PKCE URL, token exchange and verification."
+        },
+        {
+          "path": "server/src/auth/index.ts",
+          "label": "server/src/auth/index.ts",
+          "note": "Account resolution and Rewind session lifecycle."
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts",
+          "note": "Trusted account, selected group and profile resolution."
+        },
+        {
+          "path": "server/src/groups/invites.ts",
+          "label": "server/src/groups/invites.ts",
+          "note": "Owner checks and transactional invitation acceptance."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why have a Rewind session after Cognito sign-in?",
+          "a": "Cognito verifies identity. Rewind issues its own session and uses its own membership records to authorise group operations."
+        },
+        {
+          "q": "Does knowing a group ID grant access?",
+          "a": "No. The server resolves the signed-in account and checks the applicable membership, selected group and owner rules."
+        },
+        {
+          "q": "Where is the Strategy class from the old report?",
+          "a": "There is no universal policy Strategy class in current code. The implementation uses sign-in adapters and explicit authorisation functions and queries."
+        }
+      ]
+    },
+    {
+      "id": "t2-platform-capture",
+      "title": "T2 · Isolate capture and own local media",
+      "summary": "Refine a conceptual Recording into camera contracts, recording/review sessions and an explicit file lifetime.",
+      "paragraphs": [
+        "**Analysis objects impacted:** camera and review boundaries; capture/review controls; Recording, Photo, Trim and pending-media entities. **Use cases:** UC04 video and UC05 photo; UC06 correction also needs cleanup of replaced or discarded local media.",
+        "**Static change and rationale:** introduce `CameraPlatform`, `ExpoCameraPlatform`, `BoundedVideoRecordingSession`, `ClipReviewSession`, managed file stores and `StillImageCaptureSession`. The video screen delegates access, recording, review, upload and cleanup to hooks such as `useVideoAccess`, `useClipReviewState`, `useClipUpload` and `useCaptureLifecycle`. These seams keep device APIs and media lifetime out of one large screen.",
+        "**Dynamic change and rationale:** obtain permission, capture into an owned local handle, review and trim, then prepare the upload. On web, the photo path applies a retro look before upload; video does so when the browser supports re-encoding. An incapable video browser uploads the original for the server’s look processing. Successful submission, retake, cancellation and interruption must clean up the correct media and ignore late asynchronous completions.",
+        "**Current-code correction:** the older capture models predate the browser retro pipeline and split video hooks. `retro-browser.ts` and `retro-looks.ts` now implement the on-device look; `clientProcessed` tells the worker to normalise without applying the look twice. Native adapters remain in source, while the delivered iOS experience is the PWA."
+      ],
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Current web capture path",
+          "steps": [
+            {
+              "label": "Capture",
+              "sub": "Owned local media",
+              "detail": "Camera and file adapters return media with a managed lifetime."
+            },
+            {
+              "label": "Review",
+              "sub": "Trim and look",
+              "detail": "Review stores the chosen bounds and look before submission."
+            },
+            {
+              "label": "Prepare media",
+              "sub": "Browser or server",
+              "detail": "Web photos are graded locally. Supported web video is trimmed and graded locally; otherwise the server processes the original.",
+              "accent": true
+            },
+            {
+              "label": "Submit",
+              "sub": "Server validates",
+              "detail": "Transport submits the result, but the server still verifies source metadata, authorisation and allowance."
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-design-class.svg); [review analysis](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f2-analysis-sequence.svg) · [older review design](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f2-design-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "src/capture/contracts.ts",
+          "label": "src/capture/contracts.ts",
+          "note": "Camera contract."
+        },
+        {
+          "path": "src/capture/platform.ts",
+          "label": "src/capture/platform.ts",
+          "note": "Concrete camera adapter."
+        },
+        {
+          "path": "src/capture/VideoCaptureScreen.tsx",
+          "label": "src/capture/VideoCaptureScreen.tsx",
+          "note": "Screen composed from extracted controls and hooks."
+        },
+        {
+          "path": "src/capture/useClipUpload.ts",
+          "label": "src/capture/useClipUpload.ts",
+          "note": "Retro preparation, submission, cancellation and retries."
+        },
+        {
+          "path": "src/capture/useCaptureLifecycle.ts",
+          "label": "src/capture/useCaptureLifecycle.ts",
+          "note": "Owned media cleanup and operation lifetime."
+        },
+        {
+          "path": "src/capture/CameraCaptureScreen.tsx",
+          "label": "src/capture/CameraCaptureScreen.tsx",
+          "note": "Photo preparation before upload."
+        },
+        {
+          "path": "src/capture/retro-browser.ts",
+          "label": "src/capture/retro-browser.ts",
+          "note": "Browser encoding adapter."
+        },
+        {
+          "path": "server/src/ffmpeg.ts",
+          "label": "server/src/ffmpeg.ts",
+          "note": "Normalisation and fallback look processing."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why separate local capture from uploading?",
+          "a": "A user can review, retake or lose the network before the server accepts anything. Local media needs its own lifetime and error handling."
+        },
+        {
+          "q": "Is the look always applied before upload?",
+          "a": "Web photos use the browser pipeline; web video uses it when re-encoding is supported. Otherwise video processing falls back to the server."
+        },
+        {
+          "q": "Is Template Method used here?",
+          "a": "No shared base class defines overridable capture steps. The implementation uses contracts, sessions, hooks and explicit async functions."
+        }
+      ]
+    },
+    {
+      "id": "t3-transactional-contribution",
+      "title": "T3 · Accept contributions atomically and retry safely",
+      "summary": "Refine Allowance and Correction into persisted quota, contribution, job and replacement records.",
+      "paragraphs": [
+        "**Analysis objects impacted:** submit/status boundaries; contribution and correction controls; Allowance, Contribution, ProcessingJob and Replacement entities. **Use cases:** UC04–UC06 directly; UC08 consumes the accepted contributions when building a film.",
+        "**Static change and rationale:** add contribution quota windows, a durable contribution ledger, media-job records, idempotency keys and an explicit replacement link. The server owns both count and duration allowance. A job’s processing state is separate from the fact that a contribution has been accepted, so a processing retry need not consume a second allowance.",
+        "**Dynamic change and rationale:** authenticate and validate the source; check the collecting cycle and reserve both quota dimensions in the acceptance transaction; persist the contribution and job; then process outside the transaction. Replaying the same key resolves the existing result, while a conflicting payload is rejected. This handles a response lost after the server committed.",
+        "For correction, check ownership, the current allowance window and the remaining delete entitlement; tombstone the contribution and restore allowance transactionally. Link an accepted replacement to that deleted record. Cleanup follows the committed decision. The UI cannot grant a second correction by deleting its own local state."
+      ],
+      "notes": [
+        "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-design-class.svg); [allowance analysis](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f1-analysis-sequence.svg) · [allowance design](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f1-design-sequence.svg); [correction analysis](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f2-analysis-sequence.svg) · [correction design](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f2-design-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/routes/contribution-routes.ts",
+          "label": "server/src/routes/contribution-routes.ts",
+          "note": "Staged intake, acceptance, processing and contribution status routes."
+        },
+        {
+          "path": "server/src/contributions/index.ts",
+          "label": "server/src/contributions/index.ts",
+          "note": "Quota reservation, deletion and allowance restoration."
+        },
+        {
+          "path": "server/src/contributions/ledger.ts",
+          "label": "server/src/contributions/ledger.ts",
+          "note": "Ledger projection and explicit replacement linkage."
+        },
+        {
+          "path": "server/src/media/upload-intents.ts",
+          "label": "server/src/media/upload-intents.ts",
+          "note": "Direct-upload completion and idempotent acceptance."
+        },
+        {
+          "path": "server/src/jobs/compilation.ts",
+          "label": "server/src/jobs/compilation.ts",
+          "note": "Durable processing records and claims."
+        },
+        {
+          "path": "server/src/schema.ts",
+          "label": "server/src/schema.ts",
+          "note": "Persisted constraints and schema."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why is a disabled Upload button insufficient?",
+          "a": "Two requests can arrive together or a client can bypass the UI. Only the server’s atomic quota update protects the limit."
+        },
+        {
+          "q": "What if the upload response is lost?",
+          "a": "Retry with the same idempotency key and reconcile the existing contribution. Do not create a fresh key for work the server may already have accepted."
+        },
+        {
+          "q": "Why preserve a deleted record?",
+          "a": "The tombstone and replacement link retain correction history and prevent repeated replacement claims."
+        }
+      ]
+    },
+    {
+      "id": "t4-persisted-lifecycle",
+      "title": "T4 · Persist cycle transitions and recoverable film work",
+      "summary": "Refine Cycle and Film into stored state transitions, successor links, durable jobs and fenced worker claims.",
+      "paragraphs": [
+        "**Analysis objects impacted:** clock/worker and premiere boundaries; rollover, compilation and release controls; Cycle, Film, CompilationInput and Release entities. **Use cases:** UC07 and UC08 directly; the result gates UC04–UC06 intake and UC12–UC13 delivery.",
+        "**Static change and rationale:** store cycle status, lock state, transition receipts, successor identity, release status and publication time. Store film jobs, ordered inputs, attempts, lease times and claim generations. These are distinct records because closing intake, running FFmpeg and publishing a film have different failure and recovery points.",
+        "**Dynamic change and rationale:** the scheduler discovers due work; a transaction moves a collecting cycle to revealing, ensures its film job and successor, and conditionally advances the group pointer. The worker claims durable work and performs expensive processing outside that transaction. Only the current generation can finalise verified output. Duplicate ticks and restarted processes reuse persisted intent.",
+        "Publication is a separate guarded operation after the cycle end and verified ready output. The premiere lasts 24 hours from `release_published_at`, so a delayed compilation does not shorten it. Afterwards the old cycle becomes archived while its successor can already be collecting. The current database adapter supports local SQLite and configured PostgreSQL; the old model’s SQLite label is not the whole current deployment design."
+      ],
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Separate closure, work and publication",
+          "steps": [
+            {
+              "label": "Close cycle",
+              "sub": "Persist successor and job",
+              "detail": "A transaction records the transition and successor. A repeated tick finds the same durable work."
+            },
+            {
+              "label": "Claim job",
+              "sub": "Lease and generation",
+              "detail": "The persisted claim identifies which worker may complete the job.",
+              "accent": true
+            },
+            {
+              "label": "Compile film",
+              "sub": "Verify output",
+              "detail": "FFmpeg runs outside the lifecycle transaction. Completion checks inputs, output identity and current claim."
+            },
+            {
+              "label": "Publish release",
+              "sub": "Start premiere clock",
+              "detail": "Publication records its own timestamp. Archive transition follows the premiere duration."
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-design-class.svg); [Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-design-class.svg). [retry analysis](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f2-analysis-sequence.svg) · [retry design](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f2-design-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/cycles/scheduler.ts",
+          "label": "server/src/cycles/scheduler.ts",
+          "note": "Due scanning and worker scheduling."
+        },
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts",
+          "note": "Persisted transitions, successor and release gates."
+        },
+        {
+          "path": "server/src/jobs/compilation.ts",
+          "label": "server/src/jobs/compilation.ts",
+          "note": "Durable film inputs, generation-fenced processing and completion."
+        },
+        {
+          "path": "server/src/jobs/worker.ts",
+          "label": "server/src/jobs/worker.ts",
+          "note": "Bounded automatic worker ticks."
+        },
+        {
+          "path": "server/src/db.ts",
+          "label": "server/src/db.ts",
+          "note": "Database selection."
+        },
+        {
+          "path": "server/src/postgres/sync-worker.ts",
+          "label": "server/src/postgres/sync-worker.ts",
+          "note": "PostgreSQL serialised writer compatibility."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why does polling not solve duplicate rollover?",
+          "a": "Polling only wakes the process. Transactions, transition uniqueness, successor identity and guarded pointer updates make replay safe."
+        },
+        {
+          "q": "What stops a stale worker publishing?",
+          "a": "Finalisation checks the persisted claim generation. A worker holding an older generation cannot complete over a newer claim."
+        },
+        {
+          "q": "Does the premiere start at scheduled cycle end?",
+          "a": "It starts at publication. A late film still receives the configured 24-hour premiere."
+        }
+      ]
+    },
+    {
+      "id": "t5-asynchronous-participation",
+      "title": "T5 · Separate durable participation from live delivery",
+      "summary": "Refine Conversation and Reminder into committed chat events, reconnect cursors and consent-scoped reminder jobs.",
+      "paragraphs": [
+        "**Analysis objects impacted:** settings, chat and notification boundaries; prompt, conversation and reminder controls; Prompt, Timezone, Message, ReminderPreference, Destination and Outbox entities. **Use cases:** UC09–UC11; the older UC02 settings subflows overlap these responsibilities, while Member D owns their detailed explanation.",
+        "**Static change and rationale:** split chat persistence from `RealtimeHub` and the SSE client. Split reminder preferences and device destinations from outbox records and the provider interface. A chat subscriber exists only while connected; a reminder job must survive disconnection and respect later consent changes. One generic observer cannot express both lifetimes.",
+        "**Dynamic change and rationale:** commit the chat message and event before fan-out. On reconnect, subscribe and buffer live traffic while replaying persisted message events to a watermark, then flush newer events. The stream rechecks access. Reactions use separate updates and do not advance the persisted message cursor.",
+        "For reminders, calculate due time in the group timezone, enqueue idempotently, lease a row, recheck session/preference/destination generation, call the provider outside the database transaction, and fence completion by lease. Provider acceptance is not proof of on-screen display. The runtime now starts a non-overlapping reminder loop when providers are configured; the old report’s one-shot-only description is outdated. Web push is the product channel; disabled Expo/native paths in source are not delivered scope."
+      ],
+      "notes": [
+        "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-design-class.svg); [reconnect analysis](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f4-analysis-sequence.svg) · [reconnect design](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f4-design-sequence.svg). [Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-design-class.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/chat/index.ts",
+          "label": "server/src/chat/index.ts",
+          "note": "Message/event transaction and history."
+        },
+        {
+          "path": "server/src/realtime/index.ts",
+          "label": "server/src/realtime/index.ts",
+          "note": "Process-local pub/sub and SSE encoding."
+        },
+        {
+          "path": "server/src/routes/chat-routes.ts",
+          "label": "server/src/routes/chat-routes.ts",
+          "note": "Authenticated replay, buffering and stream access checks."
+        },
+        {
+          "path": "server/src/groups/settings.ts",
+          "label": "server/src/groups/settings.ts",
+          "note": "Prompt, timezone and preference updates."
+        },
+        {
+          "path": "server/src/reminders/outbox.ts",
+          "label": "server/src/reminders/outbox.ts",
+          "note": "Due scan, destination generations, leases and outcomes."
+        },
+        {
+          "path": "server/src/reminders/loop.ts",
+          "label": "server/src/reminders/loop.ts",
+          "note": "Recurring bounded reminder work."
+        },
+        {
+          "path": "server/src/cli.ts",
+          "label": "server/src/cli.ts",
+          "note": "Starts the loop only when providers are configured."
+        },
+        {
+          "path": "src/real/settings/ReminderBlock.tsx",
+          "label": "src/real/settings/ReminderBlock.tsx",
+          "note": "Current reminder UI."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Can a pub/sub hub recover a missed message by itself?",
+          "a": "No. Rewind replays persisted message events from the cursor. The hub only fans out committed events in the running process."
+        },
+        {
+          "q": "Are reactions part of the same durable cursor?",
+          "a": "No. Reaction frames do not move the message reconnect cursor; the client has separate reaction synchronisation."
+        },
+        {
+          "q": "Why keep a durable outbox if web push already queues a send?",
+          "a": "The outbox records scheduling, eligibility, retries and outcomes in Rewind. It also lets the server cancel stale work after consent or destination changes."
+        }
+      ]
+    },
+    {
+      "id": "t6-authorised-delivery",
+      "title": "T6 · Authorise each delivery and keep caches public",
+      "summary": "Refine ReleasedMedia into short-lived access grants, verified serving and client playback/download adapters.",
+      "paragraphs": [
+        "**Analysis objects impacted:** Archive, player, download, install and invite-link boundaries; release-access and delivery controls; ReleasedFilm, OwnClip, Capability and InviteIntent entities. **Use cases:** UC12–UC14; UC03 remains the authoritative invitation acceptance operation.",
+        "**Static change and rationale:** introduce `MediaCapabilities`, media-access routes, verified store-serving helpers, the archive client Facade and download Adapter functions. A capability binds a session, account, group, member, purpose, job and exact output identity. A stored media reference names bytes; it is not membership authority.",
+        "**Dynamic change and rationale:** fetch current archive/premiere state and obtain a fresh grant for the action. Resolve the grant against current session, selected membership, published release and ready output; verify storage bytes and recheck before delivery. Own-clip grants also bind the member who contributed. Expiry or a group/session change forces refresh rather than replaying a stale URL.",
+        "Install/update sequences keep a separate public-shell cache: warm the complete versioned shell before activation and bypass API/private media. An offline shell does not make private archive playback available. Invitation links parse into bounded intent; authentication and server acceptance still create membership. Current screens are `src/real/Archive.tsx` and `src/real/Film.tsx`, replacing the older Archive-screen name."
+      ],
+      "notes": [
+        "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-design-class.svg); [playback analysis](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f2-analysis-sequence.svg) · [playback design](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f2-design-sequence.svg). [Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-design-class.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/archive/capabilities.ts",
+          "label": "server/src/archive/capabilities.ts",
+          "note": "Purpose/session/output-bound grants and fresh database checks."
+        },
+        {
+          "path": "server/src/routes/archive-routes.ts",
+          "label": "server/src/routes/archive-routes.ts",
+          "note": "Archive, premiere and capability-gated serving."
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts",
+          "note": "Selected membership and verified media helpers."
+        },
+        {
+          "path": "server/src/archive/store-serving.ts",
+          "label": "server/src/archive/store-serving.ts",
+          "note": "Verified media-store snapshots."
+        },
+        {
+          "path": "src/auth/real-account-client.ts",
+          "label": "src/auth/real-account-client.ts",
+          "note": "Archive/premiere Facade and item refresh."
+        },
+        {
+          "path": "src/real/Film.tsx",
+          "label": "src/real/Film.tsx",
+          "note": "Fresh-authorisation download flow."
+        },
+        {
+          "path": "src/archive/archive-download.ts",
+          "label": "src/archive/archive-download.ts",
+          "note": "Browser/file delivery and download queue."
+        },
+        {
+          "path": "public/sw.js",
+          "label": "public/sw.js",
+          "note": "Public shell cache boundary."
+        },
+        {
+          "path": "src/invites/deep-links.ts",
+          "label": "src/invites/deep-links.ts",
+          "note": "Bounded invitation intent."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is a capability a permanent public media URL?",
+          "a": "No. It is short-lived and tied to current session, membership, release, purpose and output identity; the serving path rechecks it."
+        },
+        {
+          "q": "Why refresh just before downloading?",
+          "a": "A previously listed URL can expire or lose authority after sign-out, group selection or release changes."
+        },
+        {
+          "q": "Does offline PWA support mean offline films?",
+          "a": "No. The service worker caches the public shell and bypasses private API and media requests."
+        }
+      ]
+    },
+    {
+      "id": "class-model-register",
+      "title": "Class models for each use case",
+      "summary": "Each listed use case has an analysis class diagram and a design class diagram in its report package.",
+      "paragraphs": [
+        "Use the analysis view to explain boundary/control/entity responsibilities. Use the design view with the T1–T6 source mappings above to identify current modules, records and dependencies. These links open the existing SVGs on the repository’s `dev` branch.",
+        "**Refresh still needed in the report artwork:** UC01’s existing class/sequence views do not describe the complete current Cognito flow. Other design views retain older screen, HTTP, SQLite and provider labels. The links prove that report models exist, not that their text has been regenerated from this refactor. The current-code explanations on this page are the reading crosswalk."
+      ],
+      "tables": [
+        {
+          "title": "Use case × member × strategies × class models",
+          "columns": ["Use case", "Owner", "Strategies", "Models"],
+          "rows": [
+            [
+              "UC01 · Register, authenticate and manage a session",
+              "Member A",
+              "T1",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-design-class.svg)"
+            ],
+            [
+              "UC02 · Create and select a real group",
+              "Member A",
+              "T1, T5",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-design-class.svg)"
+            ],
+            [
+              "UC03 · Issue, revoke and accept a group invitation",
+              "Member A",
+              "T1, T6",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-design-class.svg)"
+            ],
+            [
+              "UC04 · Record, review, trim and submit video",
+              "Member B",
+              "T1–T3",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-design-class.svg)"
+            ],
+            [
+              "UC05 · Contribute a photo",
+              "Member B",
+              "T1–T3",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc05-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc05-design-class.svg)"
+            ],
+            [
+              "UC06 · Enforce allowance and one correction",
+              "Member B",
+              "T1–T3",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-design-class.svg)"
+            ],
+            [
+              "UC07 · Close a cycle and open its successor",
+              "Member C",
+              "T4",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-design-class.svg)"
+            ],
+            [
+              "UC08 · Compile, retry, publish, premiere and archive a film",
+              "Member C",
+              "T3, T4",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-design-class.svg)"
+            ],
+            [
+              "UC09 · Owner prompt and group timezone",
+              "Member D",
+              "T1, T5",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc09-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc09-design-class.svg)"
+            ],
+            [
+              "UC10 · Reminder preference and asynchronous delivery",
+              "Member D",
+              "T1, T5",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-design-class.svg)"
+            ],
+            [
+              "UC11 · Private group chat",
+              "Member D",
+              "T1, T5",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-design-class.svg)"
+            ],
+            [
+              "UC12 · View premiere and released Archive",
+              "Member C",
+              "T1, T4, T6",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-design-class.svg)"
+            ],
+            [
+              "UC13 · Download own clip or group film",
+              "Member C",
+              "T1, T6",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc13-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc13-design-class.svg)"
+            ],
+            [
+              "UC14 · Install, update and open an invitation",
+              "Member C",
+              "T1, T6",
+              "[Analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-analysis-class.svg) · [Design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-design-class.svg)"
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "doc/planning/report/packages/access/models.md",
+          "label": "ACCESS · models.md",
+          "note": "Existing model index; read alongside the current-code corrections."
+        },
+        {
+          "path": "doc/planning/report/packages/capture/models.md",
+          "label": "CAPTURE · models.md",
+          "note": "Existing model index; read alongside the current-code corrections."
+        },
+        {
+          "path": "doc/planning/report/packages/cycle/models.md",
+          "label": "CYCLE · models.md",
+          "note": "Existing model index; read alongside the current-code corrections."
+        },
+        {
+          "path": "doc/planning/report/packages/participation/models.md",
+          "label": "PARTICIPATION · models.md",
+          "note": "Existing model index; read alongside the current-code corrections."
+        },
+        {
+          "path": "doc/planning/report/packages/archive/models.md",
+          "label": "ARCHIVE · models.md",
+          "note": "Existing model index; read alongside the current-code corrections."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Does each member have a use case with both model levels?",
+          "a": "Yes, under the fixed placeholder allocation: A has ACCESS, B CAPTURE, C CYCLE and ARCHIVE, and D PARTICIPATION."
+        },
+        {
+          "q": "Can the old design figures be called fully current?",
+          "a": "No. They are linked report snapshots. Their outdated participants and Cognito/retro/reminder flows need a separate artwork refresh before final report submission."
+        }
+      ]
+    },
+    {
+      "id": "sequence-model-register",
+      "title": "Analysis and design sequences for every major flow",
+      "summary": "Read the sequence pairs by flow ID, including the package’s relevant rejection, retry and recovery branches.",
+      "paragraphs": [
+        "Each row links one analysis sequence and its design sequence. The flow labels are retained from the report model catalogue so the team can find the corresponding SVG. Current registration and sign-in include Cognito; settings screens are split; web retro preparation precedes upload where supported; reminder scheduling can run in the runtime. Apply the corrections in T1, T2 and T5 when presenting older figures.",
+        "For the normal and exceptional steps behind these rows, open the package use-case descriptions below. UC02 includes settings/preference subflows that are also detailed under UC09–UC10; this is shared behaviour, with Member D owning the participation explanation. UC14’s cross-client wording preserves the model ID; delivered iOS scope is the PWA."
+      ],
+      "notes": [
+        "[ACCESS use-case descriptions](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/use-cases.md)",
+        "[CAPTURE use-case descriptions](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/use-cases.md)",
+        "[CYCLE use-case descriptions](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/use-cases.md)",
+        "[PARTICIPATION use-case descriptions](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/use-cases.md)",
+        "[ARCHIVE use-case descriptions](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/use-cases.md)"
+      ],
+      "tables": [
+        {
+          "title": "ACCESS · Member A",
+          "columns": ["Major flow", "Analysis", "Design"],
+          "rows": [
+            [
+              "UC01-F1 · Register an account",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f1-design-sequence.svg)"
+            ],
+            [
+              "UC01-F2 · Sign in",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f2-design-sequence.svg)"
+            ],
+            [
+              "UC01-F3 · Restore or validate a session",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f3-design-sequence.svg)"
+            ],
+            [
+              "UC01-F4 · Sign out",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f4-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc01-f4-design-sequence.svg)"
+            ],
+            [
+              "UC02-F1 · Create a group",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f1-design-sequence.svg)"
+            ],
+            [
+              "UC02-F2 · List, read, and select a group",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f2-design-sequence.svg)"
+            ],
+            [
+              "UC02-F3 · Edit collecting-cycle prompt and group timezone",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f3-design-sequence.svg)"
+            ],
+            [
+              "UC02-F4 · Save a member reminder preference",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f4-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc02-f4-design-sequence.svg)"
+            ],
+            [
+              "UC03-F1 · Create an invitation",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f1-design-sequence.svg)"
+            ],
+            [
+              "UC03-F2 · Revoke an invitation",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f2-design-sequence.svg)"
+            ],
+            [
+              "UC03-F3 · Accept a valid invitation",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f3-design-sequence.svg)"
+            ],
+            [
+              "UC03-F4 · Reject an unusable invitation",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f4-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-f4-design-sequence.svg)"
+            ]
+          ]
+        },
+        {
+          "title": "CAPTURE · Member B",
+          "columns": ["Major flow", "Analysis", "Design"],
+          "rows": [
+            [
+              "UC04-F1 · Acquire access and record",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f1-design-sequence.svg)"
+            ],
+            [
+              "UC04-F2 · Review, trim, choose mode or retake",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f2-design-sequence.svg)"
+            ],
+            [
+              "UC04-F3 · Transfer, accept and process video",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-f3-design-sequence.svg)"
+            ],
+            [
+              "UC05-F1 · Capture and review a photo",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc05-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc05-f1-design-sequence.svg)"
+            ],
+            [
+              "UC05-F2 · Transfer, accept and process a photo",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc05-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc05-f2-design-sequence.svg)"
+            ],
+            [
+              "UC06-F1 · Read allowance and reserve contribution",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f1-design-sequence.svg)"
+            ],
+            [
+              "UC06-F2 · Delete and replace once",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc06-f2-design-sequence.svg)"
+            ]
+          ]
+        },
+        {
+          "title": "CYCLE · Member C",
+          "columns": ["Major flow", "Analysis", "Design"],
+          "rows": [
+            [
+              "UC07-F1 · Close due cycle and start successor",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-f1-design-sequence.svg)"
+            ],
+            [
+              "UC07-F2 · Replay after duplicate tick or restart",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc07-f2-design-sequence.svg)"
+            ],
+            [
+              "UC08-F1 · Compile the settled chronological input snapshot",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f1-design-sequence.svg)"
+            ],
+            [
+              "UC08-F2 · Retry a failed or abandoned compilation safely",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f2-design-sequence.svg)"
+            ],
+            [
+              "UC08-F3 · Publish one verified film at or after cycle end",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f3-design-sequence.svg)"
+            ],
+            [
+              "UC08-F4 · End premiere and retain an authorized archive release",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f4-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-f4-design-sequence.svg)"
+            ]
+          ]
+        },
+        {
+          "title": "PARTICIPATION · Member D",
+          "columns": ["Major flow", "Analysis", "Design"],
+          "rows": [
+            [
+              "UC09-F1 · Load owner controls",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc09-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc09-f1-design-sequence.svg)"
+            ],
+            [
+              "UC09-F2 · Save prompt and timezone",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc09-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc09-f2-design-sequence.svg)"
+            ],
+            [
+              "UC10-F1 · Read, enable, disable or snooze",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f1-design-sequence.svg)"
+            ],
+            [
+              "UC10-F2 · Register, inspect or disable destination",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f2-design-sequence.svg)"
+            ],
+            [
+              "UC10-F3 · Scan and enqueue one weekly job",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f3-design-sequence.svg)"
+            ],
+            [
+              "UC10-F4 · Send, receipt, retry or terminate",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f4-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc10-f4-design-sequence.svg)"
+            ],
+            [
+              "UC11-F1 · Read bounded history",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f1-design-sequence.svg)"
+            ],
+            [
+              "UC11-F2 · Send text or reply",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f2-design-sequence.svg)"
+            ],
+            [
+              "UC11-F3 · Toggle reaction",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f3-design-sequence.svg)"
+            ],
+            [
+              "UC11-F4 · Reconnect and replay",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f4-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-f4-design-sequence.svg)"
+            ]
+          ]
+        },
+        {
+          "title": "ARCHIVE · Member C",
+          "columns": ["Major flow", "Analysis", "Design"],
+          "rows": [
+            [
+              "UC12-F1 · Inspect premiere and archive state",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f1-design-sequence.svg)"
+            ],
+            [
+              "UC12-F2 · Start or resume premiere playback",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f2-design-sequence.svg)"
+            ],
+            [
+              "UC12-F3 · Browse and page released archive",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-f3-design-sequence.svg)"
+            ],
+            [
+              "UC13-F1 · Download my released clip",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc13-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc13-f1-design-sequence.svg)"
+            ],
+            [
+              "UC13-F2 · Download a released group film",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc13-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc13-f2-design-sequence.svg)"
+            ],
+            [
+              "UC14-F1 · Install and open the web/PWA shell",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f1-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f1-design-sequence.svg)"
+            ],
+            [
+              "UC14-F2 · Apply a web/PWA shell update",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f2-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f2-design-sequence.svg)"
+            ],
+            [
+              "UC14-F3 · Create and open a cross-client invitation link",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f3-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f3-design-sequence.svg)"
+            ],
+            [
+              "UC14-F4 · Accept invite after opening/authentication",
+              "[Analysis sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f4-analysis-sequence.svg)",
+              "[Design sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc14-f4-design-sequence.svg)"
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "doc/planning/report/packages/access/use-cases.md",
+          "label": "ACCESS · use-cases.md",
+          "note": "Normal and exceptional major-flow inventory; historical source labels need the corrections above."
+        },
+        {
+          "path": "doc/planning/report/packages/capture/use-cases.md",
+          "label": "CAPTURE · use-cases.md",
+          "note": "Normal and exceptional major-flow inventory; historical source labels need the corrections above."
+        },
+        {
+          "path": "doc/planning/report/packages/cycle/use-cases.md",
+          "label": "CYCLE · use-cases.md",
+          "note": "Normal and exceptional major-flow inventory; historical source labels need the corrections above."
+        },
+        {
+          "path": "doc/planning/report/packages/participation/use-cases.md",
+          "label": "PARTICIPATION · use-cases.md",
+          "note": "Normal and exceptional major-flow inventory; historical source labels need the corrections above."
+        },
+        {
+          "path": "doc/planning/report/packages/archive/use-cases.md",
+          "label": "ARCHIVE · use-cases.md",
+          "note": "Normal and exceptional major-flow inventory; historical source labels need the corrections above."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is a single happy-path sequence enough?",
+          "a": "No. The course asks for an analysis and a design sequence for every major flow. Relevant exceptional paths must also be explainable."
+        },
+        {
+          "q": "What should be updated first in these older sequences?",
+          "a": "The Cognito registration/sign-in path, browser pre-upload look processing and recurring reminder loop, followed by the renamed route, schema and screen participants."
+        }
+      ]
+    }
+  ]
+}

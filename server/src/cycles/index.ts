@@ -2,8 +2,6 @@ export { CYCLE_DURATION_MS, createCycleEngine } from './engine';
 export type { CycleClock, CycleDurationPreset } from './engine';
 export {
   advanceCycleLifecycle,
-  transitionCycleLifecycle,
-  processCycleLifecycle,
   publishCycleRelease,
   publishCycleReleaseWithStore,
   advanceCycleLifecycleWithStore,

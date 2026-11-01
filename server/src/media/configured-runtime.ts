@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { mediaDir } from '../config';
 import type { RuntimeConfig } from '../config';
 import type { RuntimeServerOptions } from '../http';
 import { createMediaRuntime, type MediaRuntime } from './runtime-store';
@@ -20,7 +20,7 @@ export async function configureRuntimeMedia(
               store: runtime.store,
               transport: runtime.uploadTransport,
               environment: config.media.environment,
-              scratchDir: resolve(config.dataDir, 'media', 'intent-scratch'),
+              scratchDir: mediaDir(config, 'intent-scratch'),
               ffmpegBin: config.ffmpegBin,
             },
           }

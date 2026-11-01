@@ -4,15 +4,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { signInAs } from './helpers/real-http.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { getCurrentCycle, resetDatabase } = await import('../dist/db.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 const { revokeRealSession } = await import('../dist/auth/index.js');
 const { planConsistencyRepair } = await import('../dist/jobs/consistency.js');
 const { runWorkerTick } = await import('../dist/jobs/worker.js');
@@ -39,30 +38,20 @@ function fixtureSummary(database) {
   );
 }
 
-async function withRuntime(run, options = {}) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-runtime-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-  });
-  const { seedNow, ...serverOptions } = options;
-  const database = openFixtureDatabase(config, seedNow === undefined ? undefined : { seedNow });
-  const server = createRuntimeServer(config, database, serverOptions);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-  try {
-    return await run({ baseUrl, config, database, server });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run, { seedNow, ...serverOptions } = {}) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-runtime-test-',
+      env: {
+        REWIND_PORT: '0',
+        REWIND_FFMPEG_BIN: 'ffmpeg',
+        REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
+      },
+      seedNow,
+      serverOptions,
+    },
+    run,
+  );
 
 async function postBodyAfter(body, path, baseUrl, headers, afterPartial) {
   const url = new URL(path, baseUrl);
@@ -242,8 +231,8 @@ test('every protected endpoint category requires a real session and ignores call
     const paths = [
       '/contributions/demo-contribution?groupId=demo-group',
       '/clips/demo-clip?groupId=demo-group',
-      '/films/demo-film?groupId=demo-group',
-      '/downloads/demo-download?groupId=demo-group',
+      '/archive?groupId=demo-group',
+      '/cycles/demo-cycle/premiere?groupId=demo-group',
     ];
     const responses = await Promise.all(
       paths.map(async (path) => {
@@ -326,8 +315,6 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     assert.equal(noSession.status, 401);
     const noArchiveSession = await fetch(`${baseUrl}/archive?groupId=demo-group`);
     assert.equal(noArchiveSession.status, 401);
-    const noDownloadSession = await fetch(`${baseUrl}/films/demo-film/download?groupId=demo-group`);
-    assert.equal(noDownloadSession.status, 401);
 
     database
       .prepare(
@@ -431,10 +418,11 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     }).then((response) => response.json());
     assert.equal(otherMemberArchive.archive.films.length, 1);
     assert.equal(otherMemberArchive.archive.clips.length, 0);
-    const otherMemberClip = await fetch(`${baseUrl}/clips/demo-clip/download?groupId=demo-group`, {
+    // Another member's session cannot use the owner's own-clip capability.
+    const borrowedClip = await fetch(`${baseUrl}${archive.archive.clips[0].downloadPath}`, {
       headers: otherMember.headers,
     });
-    assert.equal(otherMemberClip.status, 404);
+    assert.equal(borrowedClip.status, 404);
 
     const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`, asOwner);
     assert.equal(playback.status, 200);
@@ -475,8 +463,7 @@ test('malformed percent-encoded path segments return a client error for every ro
     const paths = [
       `/contributions/${malformed}?groupId=demo-group&memberId=demo-1`,
       `/clips/${malformed}?groupId=demo-group&memberId=demo-1`,
-      `/films/${malformed}?groupId=demo-group&memberId=demo-1`,
-      `/downloads/${malformed}?groupId=demo-group&memberId=demo-1`,
+      `/cycles/${malformed}/premiere?groupId=demo-group&memberId=demo-1`,
     ];
     for (const path of paths) {
       const response = await fetch(`${baseUrl}${path}`);

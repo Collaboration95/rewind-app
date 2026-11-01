@@ -16,8 +16,6 @@ export type CaptureStatus =
   | 'ready'
   | 'capturing'
   | 'preview'
-  | 'saving'
-  | 'saved'
   | 'capture-failed'
   | 'write-failed';
 
@@ -45,7 +43,7 @@ export function cameraAccessStatus(
   permissions: PermissionSnapshot,
 ): Exclude<
   CaptureStatus,
-  'checking' | 'capturing' | 'preview' | 'saving' | 'saved' | 'capture-failed' | 'write-failed'
+  'checking' | 'capturing' | 'preview' | 'capture-failed' | 'write-failed'
 > {
   const capabilityStatus = firstCapabilityStatus(capabilities.camera);
   if (capabilityStatus === 'unsupported') return 'unsupported';

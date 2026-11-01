@@ -368,8 +368,9 @@
       </p>
       <p>
         At the baseline, <a href="../../infra/terraform/media/database.tf">database.tf</a> enables
-        dev cutover but disables release provisioning/cutover. That declaration is not a current
-        health check. Release persistence/recovery remains #504; operations stay in the
+        dev cutover. It declares release PostgreSQL with cutover off while the cutover is in
+        progress (see <a href="../architecture/release-cutover.md">release cutover</a>). That
+        declaration is not a current health check. Operations stay in the
         <a href="../architecture/postgresql-operations.md">database runbook</a>.
       </p>
       <h2 id="jobs"><span class="lvl">4</span>Internal loops and durable work</h2>
@@ -470,9 +471,8 @@
       <p>
         The active <a href="../../infra/terraform/media/main.tf">media root</a> uses SSE-S3
         (<code>AES256</code>), versioning and public-access blocking. The adapter supports SSE-KMS
-        when configured with a canonical key ARN, and the separate
-        <a href="../../infra/terraform/modules/private-media/main.tf">private-media module</a>
-        requires it. Compose does not pass a KMS selector. Do not describe the current root as KMS.
+        when configured with a canonical key ARN. Compose does not pass a KMS selector. Do not
+        describe the current root as KMS.
       </p>
       <p>
         Direct S3 PUT avoids Node's intake hop. Node still materializes/verifies S3 bytes for

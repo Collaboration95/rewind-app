@@ -1,0 +1,18 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Three historical contribution migration identifiers (not credentials)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^server/src/(schema|db)\.ts$''']
+regexTarget = "secret"
+regexes = ['''^(contribution-deletion-v1|contribution-ledger-v1|contribution-quota-v1)$''']
+
+[[allowlists]]
+description = "Two exact synthetic clip/idempotency keys in three historical tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^tests/(direct-transfer(\.coverage)?\.test\.ts|real-account-video-runtime\.test\.ts)$''']
+regexTarget = "secret"
+regexes = ['''^(clip-key-1234|direct-key-12345)$''']

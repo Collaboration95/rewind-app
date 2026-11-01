@@ -22,7 +22,9 @@ ENV NODE_ENV=production \
     REWIND_DATA_DIR=/var/lib/rewind \
     REWIND_FFMPEG_BIN=ffmpeg
 
-RUN apk add --no-cache ca-certificates 'ffmpeg=8.1.2-r0' \
+# Keep the digest-pinned base, then install patched Alpine security packages.
+RUN apk upgrade --no-cache \
+  && apk add --no-cache ca-certificates 'ffmpeg=8.1.3-r0' \
   && rm -rf /usr/local/lib/node_modules /opt/yarn-v* \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg \
   && addgroup -S -g 10001 rewind \

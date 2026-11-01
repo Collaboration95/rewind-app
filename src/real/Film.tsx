@@ -27,6 +27,7 @@ import { createFilmPlayback } from './film-playback';
 import { discoverOwnClips } from './film-own-clips';
 import { reportContent } from './safety';
 import { userMessage } from '../domain/user-message';
+import { postJson } from './request';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -319,7 +320,7 @@ export function FilmScreen({
     try {
       const response = await request(
         `/real/groups/${encodeURIComponent(groupId)}/contributions/${encodeURIComponent(removing.contributionId)}/remove`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+        postJson(),
       );
       if (!response.ok) throw new Error('remove');
       const id = removing.contributionId;

@@ -184,30 +184,9 @@ validate_recreate_plan() {
             "aws_lightsail_instance.rewind[0]",
             "aws_lightsail_static_ip.rewind[0]",
             "aws_lightsail_static_ip_attachment.rewind[0]",
-            "aws_lightsail_instance_public_ports.rewind[0]",
-            "aws_iam_role.power_controller[0]",
-            "aws_iam_role_policy.power_controller[0]",
-            "aws_iam_role_policy.operator[0]",
-            "aws_iam_role_policy.scheduler[0]",
-            "aws_lambda_function.power_controller[0]",
-            "aws_scheduler_schedule.automatic_start[0]"
+            "aws_lightsail_instance_public_ports.rewind[0]"
           ] | index($address)
         ) != null and $actions == ["create"]
-      ) or
-      (
-        .address == "aws_iam_role_policy.power_controller[0]" and
-        (.change.actions // []) == ["update"] and
-        (.change.after_unknown.policy == true) and
-        ((.change.after_unknown | keys) == ["policy"]) and
-        ((.change.before | del(.policy)) == (.change.after | del(.policy))) and
-        ((.change.before.policy | fromjson | .Statement) |
-          any(.[];
-            .Sid == "ControlOnlyTheRewindDemo" and
-            .Effect == "Allow" and
-            (.Action | sort) == ["lightsail:StartInstance", "lightsail:StopInstance"] and
-            ((.Resource | if type == "array" then .[0] else . end) |
-              test("^arn:aws:lightsail:[a-z0-9-]+:[0-9]{12}:Instance/[A-Za-z0-9-]+$"))
-          ))
       )
     )
   ' "$json_path" >/dev/null; then

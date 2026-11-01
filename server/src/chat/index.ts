@@ -586,17 +586,3 @@ export function toggleChatReaction(
     throw error;
   }
 }
-
-export function addChatReaction(
-  database: RewindDatabase,
-  input: Omit<ToggleChatReactionInput, 'active'>,
-): ToggleChatReactionResult {
-  return toggleChatReaction(database, { ...input, active: true });
-}
-
-export function removeChatReaction(
-  database: RewindDatabase,
-  input: Omit<ToggleChatReactionInput, 'active'>,
-): ToggleChatReactionResult {
-  return toggleChatReaction(database, { ...input, active: false });
-}
