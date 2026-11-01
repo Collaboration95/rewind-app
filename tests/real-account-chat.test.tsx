@@ -62,6 +62,73 @@ const savedMessage = {
 };
 
 describe('real-account chat', () => {
+  it.each([
+    ['a'.repeat(18) + '😀tail', 'a'.repeat(18) + '…'],
+    ['a'.repeat(17) + '😀tail', 'a'.repeat(17) + '😀…'],
+  ])('keeps the placeholder valid when truncating %s', async (groupName, shortened) => {
+    (useRealAccount as jest.Mock).mockReturnValue({
+      baseUrl: 'https://runtime.example',
+      session: { account: { id: 'account-id', displayName: 'Member' } },
+      authenticatedRequest: jest.fn(async () =>
+        response({ events: [], nextCursor: null, watermarkEventId: 0, hasMore: false }),
+      ),
+      realtimeAuthorizationHeader: () => undefined,
+    });
+
+    const result = await render(
+      <RealAccountChatScreen
+        groupId="real-group-a"
+        groupName={groupName}
+        currentMemberId="real-profile-member"
+        members={[]}
+        onBack={jest.fn()}
+      />,
+    );
+    expect(result.getByTestId('real-chat-composer').props.placeholder).toBe(`Message ${shortened}`);
+  });
+
+  it.each([
+    [new Date(2026, 2, 9, 0, 30), new Date(2026, 2, 8, 12)],
+    [new Date(2026, 10, 1, 23, 30), new Date(2026, 9, 31, 12)],
+  ])('labels the previous local date Yesterday at %s', async (now, yesterday) => {
+    // Run with TZ=America/New_York to exercise both daylight-saving transitions.
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now.getTime());
+    try {
+      (useRealAccount as jest.Mock).mockReturnValue({
+        baseUrl: 'https://runtime.example',
+        session: { account: { id: 'account-id', displayName: 'Member' } },
+        authenticatedRequest: jest.fn(async () =>
+          response({
+            events: [
+              {
+                eventId: 4,
+                type: 'message',
+                message: { ...savedMessage, createdAt: yesterday.toISOString() },
+              },
+            ],
+            nextCursor: null,
+            watermarkEventId: 4,
+            hasMore: false,
+          }),
+        ),
+        realtimeAuthorizationHeader: () => undefined,
+      });
+
+      const result = await render(
+        <RealAccountChatScreen
+          groupId="real-group-a"
+          groupName="Saturday table"
+          currentMemberId="real-profile-member"
+          members={[]}
+          onBack={jest.fn()}
+        />,
+      );
+      expect(await result.findByText('Yesterday')).toBeTruthy();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('loads history older than the first 100 and keeps newer live events deduplicated', async () => {
     const latestPage = Array.from({ length: 100 }, (_, index) => {
       const eventId = index + 2;
