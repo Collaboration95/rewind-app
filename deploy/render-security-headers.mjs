@@ -13,7 +13,7 @@ export async function renderSecurityHeaders(artifactDir, templatePath, outputPat
       else if (entry.name.endsWith('.html')) {
         const html = await readFile(path, 'utf8');
         for (const [, attributes, body] of html.matchAll(
-          /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi,
+          /<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi,
         )) {
           if (!/\bsrc\s*=/i.test(attributes) && body.trim())
             hashes.add(`'sha256-${createHash('sha256').update(body).digest('base64')}'`);

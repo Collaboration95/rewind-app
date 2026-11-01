@@ -35,6 +35,11 @@ test('CSP authorises exact inline bytes from every HTML page and excludes extern
     await writeFile(join(root, 'legal', 'page.html'), 'no script');
     await renderSecurityHeaders(root, template, output);
     assert.ok(!(await readFile(output, 'utf8')).includes(`'sha256-${hash}'`));
+    // Browsers accept attributes/whitespace on an end tag, despite invalid HTML.
+    // These are still script bytes to hash, rather than an HTML sanitisation step.
+    await writeFile(join(root, 'index.html'), `<SCRIPT>${body}</sCrIpT\t\n ignored="value">`);
+    await renderSecurityHeaders(root, template, output);
+    assert.ok((await readFile(output, 'utf8')).includes(`'sha256-${hash}'`));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
