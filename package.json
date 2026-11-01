@@ -92,7 +92,28 @@
     "node-forge": "$node-forge",
     "braces": "$braces",
     "@expo/cli": {
-      "zod": "4.6.6"
+      "zod": "4.6.6",
+      "glob": "14.0.3"
+    },
+    "@expo/config": {
+      "glob": "14.0.3"
+    },
+    "@expo/config-plugins": {
+      "glob": "14.0.3"
+    },
+    "@expo/metro-config": {
+      "glob": "14.0.3"
+    },
+    "@expo/fingerprint": {
+      "glob": "14.0.3",
+      "minimatch": "11.0.3"
+    },
+    "babel-plugin-istanbul": {
+      "test-exclude": {
+        ".": "8.0.0",
+        "glob": "14.0.3",
+        "minimatch": "11.0.3"
+      }
     }
   }
 }
