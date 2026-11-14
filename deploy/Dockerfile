@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS build
+FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -14,7 +14,7 @@ COPY scripts/runtime-dependencies.mjs ./scripts/runtime-dependencies.mjs
 RUN npm run server:build \
   && node scripts/runtime-dependencies.mjs /app /runtime-dependencies
 
-FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
+FROM node:26.13.0-alpine3.24@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS runtime
 
 ENV NODE_ENV=production \
     REWIND_HOST=0.0.0.0 \
