@@ -31,10 +31,11 @@ resource "aws_lightsail_instance" "rewind" {
   name              = local.instance_name
   availability_zone = "ap-southeast-1a"
   blueprint_id      = "ubuntu_24_04"
-  # nano_3_0 (512 MB, 20 GB, US$5/month): the runtime idles near 4% CPU and
-  # 150 MB RSS; cloud-init.sh adds swap for deploys. Changing the bundle
-  # replaces the host, but the static IP (and so the CloudFront origin) stays.
-  bundle_id       = "nano_3_0"
+  # micro_3_0, not nano: the runtime's 1 s cycle/worker polling idles at about
+  # nano's 5% CPU baseline, so a nano host never earns burst credit and
+  # deploys fail their health checks (tried 15 Nov 2026). The static IP keeps
+  # the CloudFront origin stable when the host is replaced.
+  bundle_id       = "micro_3_0"
   ip_address_type = "ipv4"
   user_data       = file("${path.module}/cloud-init.sh")
 
