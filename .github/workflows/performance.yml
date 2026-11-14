@@ -1,0 +1,56 @@
+name: Scripted hosted performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: Authorized hosted dev origin (creates three synthetic accounts)
+        required: true
+        default: https://d2m6kz76y4kuvm.cloudfront.net
+        type: string
+      max_vus:
+        description: Maximum virtual users (1 to 100)
+        required: true
+        default: '100'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-performance
+  cancel-in-progress: false
+
+jobs:
+  performance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Run bounded read-heavy journeys
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+          MAX_VUS: ${{ inputs.max_vus }}
+          OUTPUT: load-results/results.json
+        run: node scripts/load/hosted.mjs
+      - name: Publish performance summary
+        if: always()
+        run: |
+          if [ -f load-results/SUMMARY.md ]; then
+            cat load-results/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain raw observations and summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hosted-performance-${{ github.run_id }}
+          path: |
+            load-results/*.json
+            load-results/SUMMARY.md
+          if-no-files-found: error
+          retention-days: 14

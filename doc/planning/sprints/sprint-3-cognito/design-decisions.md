@@ -1,8 +1,8 @@
 # Cognito sign-in: design decisions and trade-offs
 
 Recorded 8 October 2026 with the PR that delivers #363 and #364. The owner's
-decisions are in `prompt.md`; this file lists what the implementation chose
-where the prompt left room, and what was traded for speed.
+current decisions are reflected in `AGENTS.md`; this file records the
+implementation choices and what was traded for speed.
 
 ## Flow
 

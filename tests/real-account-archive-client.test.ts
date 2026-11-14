@@ -3,10 +3,7 @@ import {
   createRealAccountArchiveClient,
   resolvePublicMediaPath,
 } from '../src/auth/real-account-client';
-
-function response(body: unknown, status = 200): Response {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
-}
+import { jsonResponse as response } from './mocks/fetch';
 
 function mediaCapability(seed: string): string {
   return `/media/access/${seed.repeat(43).slice(0, 43)}`;

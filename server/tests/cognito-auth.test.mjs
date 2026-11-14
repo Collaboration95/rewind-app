@@ -1,15 +1,11 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
-import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const { ConfigError, parseConfig } = await import('../dist/config.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 const { createCognitoService, safeReturnPath, UsedStates } =
   await import('../dist/auth/cognito.js');
 
@@ -52,18 +48,7 @@ function signToken(claims, key = privateKey) {
 }
 
 /** A runtime with an injected Cognito service whose token endpoint is a stub. */
-async function withRuntime(run, { env = {}, deleteUser } = {}) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-cognito-`);
-  const config = {
-    ...parseConfig({
-      REWIND_DATA_DIR: dataDir,
-      REWIND_HOST: '127.0.0.1',
-      REWIND_PORT: '0',
-      REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-      ...env,
-    }),
-  };
-  const database = openFixtureDatabase(config);
+const withRuntime = (run, { env = {}, deleteUser } = {}) => {
   const verifier = CognitoJwtVerifier.create({
     userPoolId: COGNITO.userPoolId,
     tokenUse: 'id',
@@ -86,18 +71,15 @@ async function withRuntime(run, { env = {}, deleteUser } = {}) {
         deleted.push(sub);
       }),
   });
-  const server = createRuntimeServer(config, database, { cognito });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  try {
-    return await run({ baseUrl, database, exchange, deleted });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+  return withSharedRuntime(
+    {
+      prefix: 'rewind-cognito-',
+      env: { REWIND_PORT: '0', REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true', ...env },
+      serverOptions: { cognito },
+    },
+    (context) => run({ ...context, exchange, deleted }),
+  );
+};
 
 const cookieOf = (response, name) =>
   response.headers

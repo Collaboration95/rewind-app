@@ -828,13 +828,6 @@ export const useToast = () => useContext(ToastContext);
 
 /* ---------- Small helpers ---------- */
 
-/** Re-run a one-off CSS effect (roll, nope, tip) by changing the key it is mounted with. */
-export function useEffectKey() {
-  const [key, setKey] = useState(0);
-  const fire = useCallback(() => setKey((value) => value + 1), []);
-  return [key, fire] as const;
-}
-
 /** The current time, refreshed every minute and on foreground return, for countdowns drawn during render. */
 export function useNow(intervalMs = 60_000) {
   const [now, setNow] = useState(() => Date.now());

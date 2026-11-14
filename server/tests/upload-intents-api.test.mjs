@@ -211,7 +211,7 @@ test('lost PUT receipt recovery uses authenticated empty-body reconciliation and
     );
   }));
 
-test('upload-intent HTTP rechecks closure/quota and uses actual canonical fresh/repair migration', async () =>
+test('upload-intent HTTP rechecks closure/quota and refuses a damaged schema', async () =>
   apiFixture(async (c) => {
     const originalEnds = c.group.cycle.endsAt;
     c.database.prepare('UPDATE cycles SET max_count=1 WHERE id=?').run(c.group.cycle.id);
@@ -241,11 +241,16 @@ test('upload-intent HTTP rechecks closure/quota and uses actual canonical fresh/
     );
     assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 31);
     assert.equal(schemaReadiness(c.database).ready, true);
-    // The rest replays SQLite's repair migration; PostgreSQL uses its baseline.
+    // The rest damages the SQLite schema; since the migration squash it is
+    // reported and refused, not repaired. PostgreSQL uses its own baseline.
     if (onPostgres) return;
     c.database.prepare('DELETE FROM upload_intents WHERE group_id=?').run(c.group.group.id);
     c.database.exec('DROP TABLE upload_intents');
-    migrateDatabase(c.database);
-    assert.equal(schemaReadiness(c.database).ready, true);
-    assert.equal(c.database.prepare('SELECT count(*) AS n FROM upload_intents').get().n, 0);
+    assert.equal(schemaReadiness(c.database).ready, false);
+    assert.deepEqual(schemaReadiness(c.database).missingMigrationKeys, [
+      'baseline:upload_intents',
+      'baseline:upload_intents_expiry_idx',
+      'baseline:upload_intents_quota_idx',
+    ]);
+    assert.throws(() => migrateDatabase(c.database), /pre-migration-squash/);
   }));

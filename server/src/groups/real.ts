@@ -10,8 +10,6 @@ export const MIN_REAL_GROUP_MEMBERS = 2;
 export const MAX_REAL_GROUP_MEMBERS = 10;
 export const REAL_CYCLE_DURATION_MS = 28 * 24 * 60 * 60 * 1000;
 
-export type RealGroupInputError = 'name' | 'prompt' | 'maxMembers';
-
 export function validateRealGroupInput(input: {
   name: unknown;
   prompt: unknown;

@@ -31,9 +31,13 @@ resource "aws_lightsail_instance" "rewind" {
   name              = local.instance_name
   availability_zone = "ap-southeast-1a"
   blueprint_id      = "ubuntu_24_04"
-  bundle_id         = "micro_3_0"
-  ip_address_type   = "ipv4"
-  user_data         = file("${path.module}/cloud-init.sh")
+  # micro_3_0, not nano: the runtime's 1 s cycle/worker polling idles at about
+  # nano's 5% CPU baseline, so a nano host never earns burst credit and
+  # deploys fail their health checks (tried 15 Nov 2026). The static IP keeps
+  # the CloudFront origin stable when the host is replaced.
+  bundle_id       = "micro_3_0"
+  ip_address_type = "ipv4"
+  user_data       = file("${path.module}/cloud-init.sh")
 
   tags = {
     Environment = "demo"

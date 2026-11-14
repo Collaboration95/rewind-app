@@ -30,9 +30,6 @@ cat > "$PLAN_JSON" <<'JSON'
   {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}}
 ]}
 JSON
-power_policy='{"Statement":[{"Sid":"ControlOnlyTheRewindDemo","Effect":"Allow","Action":["lightsail:StartInstance","lightsail:StopInstance"],"Resource":"arn:aws:lightsail:ap-southeast-1:330599756236:Instance/rewind-demo"}]}'
-jq --arg policy "$power_policy" '.resource_changes += [{"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["update"],"before":{"name":"rewind-demo-power-controller","role":"rewind-demo-power-controller","policy":$policy},"after":{"name":"rewind-demo-power-controller","role":"rewind-demo-power-controller","policy":null},"after_unknown":{"policy":true}}}]' "$PLAN_JSON" > "$TEST_ROOT/expanded-plan.json"
-mv "$TEST_ROOT/expanded-plan.json" "$PLAN_JSON"
 
 cat > "$FAKE_BIN/aws" <<'FAKE_AWS'
 #!/usr/bin/env bash
@@ -274,14 +271,14 @@ fi
 ! grep -Eq '^(aws|terraform|ssh|scp|rsync) ' "$COMMAND_LOG"
 export RELEASE_BUNDLE_SHA256="$saved_release_digest"
 
-jq '(.resource_changes[] | select(.address == "aws_iam_role_policy.power_controller[0]").change.after_unknown) = {"policy":true,"role":true}' "$PLAN_JSON" > "$TEST_ROOT/unsafe-plan.json"
+jq '.resource_changes += [{"address":"aws_iam_role_policy.deploy","change":{"actions":["update"],"after_unknown":{"policy":true,"role":true}}}]' "$PLAN_JSON" > "$TEST_ROOT/unsafe-plan.json"
 cp "$TEST_ROOT/unsafe-plan.json" "$PLAN_JSON"
 if output="$(run_wake --latest 2>&1)"; then
   printf 'Expected unrelated IAM unknown change to be rejected.\n' >&2
   exit 1
 fi
 [[ "$output" == *'unexpected resource change'* ]]
-jq '(.resource_changes[] | select(.address == "aws_iam_role_policy.power_controller[0]").change.after_unknown) = {"policy":true}' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
+jq 'del(.resource_changes[] | select(.address == "aws_iam_role_policy.deploy"))' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
 cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
 
 jq '.resource_changes += [{"address":"aws_s3_bucket.unexpected[0]","change":{"actions":["create"]}}]' \

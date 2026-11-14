@@ -10,6 +10,8 @@ name: Deploy dev
 #   - deploy/release.py builds and verifies the bundle,
 #   - deploy/release-host.sh install activates it only after the runtime and
 #     web health checks pass, and restores the previous release when they fail.
+# After a successful deploy, the dast job runs an OWASP ZAP baseline scan against
+# the public URL and publishes its report (report-only).
 #
 # Required repository configuration (Settings -> Secrets and variables -> Actions -> Variables):
 #   AWS_DEMO_DEPLOY_ROLE_ARN  the deploy_role_arn output of infra/terraform/demo.
@@ -34,8 +36,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
-  actions: read
 
 env:
   AWS_REGION: ${{ vars.REWIND_DEMO_AWS_REGION || 'ap-southeast-1' }}
@@ -85,6 +85,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: dev
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
     steps:
       - name: Check out the dev commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,12 +114,17 @@ jobs:
           sha="$(git rev-parse HEAD)"
           deadline=$(( SECONDS + 1500 ))
           while :; do
-            conclusion="$(gh api -X GET \
+            quality_run="$(gh api -X GET \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/quality.yml/runs" \
               -f "head_sha=${sha}" -f branch=dev -f event=push \
-              --jq '[.workflow_runs[] | select(.head_branch == "dev" and .event == "push")][0].conclusion // "pending"' 2>/dev/null || echo pending)"
+              --jq '[.workflow_runs[] | select(.head_branch == "dev" and .event == "push")][0] // {}' 2>/dev/null || echo '{}')"
+            conclusion="$(jq -r '.conclusion // "pending"' <<<"$quality_run")"
             case "$conclusion" in
-              success) echo "Quality checks passed for ${sha}."; break ;;
+              success)
+                echo "REWIND_QUALITY_RUN_ID=$(jq -er .id <<<"$quality_run")" >> "$GITHUB_ENV"
+                echo "Quality checks passed for ${sha}."
+                break
+                ;;
               failure|cancelled|timed_out|action_required|stale)
                 echo "Quality checks concluded '${conclusion}' for ${sha}; refusing to deploy." >&2
                 exit 1
@@ -139,6 +149,39 @@ jobs:
             --branch dev \
             --output "$RUNNER_TEMP/rewind-release.tar"
           python3 deploy/release.py verify "$RUNNER_TEMP/rewind-release.tar" >/dev/null
+
+      - name: Scan the exact bundled images and write the release manifest
+        id: security
+        run: |
+          python3 deploy/scan-release.py "$RUNNER_TEMP/rewind-release.tar" \
+            "$RUNNER_TEMP/release-security" --trivy-version v0.70.0
+
+      - name: Retain deployed-image SBOMs, scan reports and release manifest
+        if: ${{ always() && (steps.security.outcome == 'success' || steps.security.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-release-security-${{ github.sha }}
+          path: ${{ runner.temp }}/release-security/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attest the release bundle and its security manifest
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/rewind-release.tar
+            ${{ runner.temp }}/release-security/release-manifest.json
+
+      - name: Retain the attested release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-release-bundle-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/rewind-release.tar
+            ${{ steps.provenance.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Assume the deploy role with GitHub OIDC
         run: |
@@ -304,3 +347,56 @@ jobs:
               echo "Warning: could not close $REWIND_RUNNER_CIDR on $REWIND_DEPLOY_INSTANCE; close it manually." >&2
           fi
           rm -rf -- "$RUNNER_TEMP/rewind-ssh"
+
+  dast:
+    needs: deploy
+    name: DAST (ZAP baseline on hosted dev)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Passive scan plus spidering of the deployed release, unauthenticated. It reports
+    # and does not fail the run: a baseline scan never sends attacks, and hosted dev
+    # holds shared data, so an active or authenticated scan does not belong here.
+    permissions:
+      contents: read
+    env:
+      REWIND_DAST_TARGET: ${{ vars.REWIND_DEMO_PUBLIC_URL || 'https://d2m6kz76y4kuvm.cloudfront.net' }}
+    steps:
+      - name: Check out the rules file
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: ZAP baseline scan
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: ${{ env.REWIND_DAST_TARGET }}
+          rules_file_name: .zap/rules.tsv
+          # -j adds the AJAX spider because the web app is a single-page app; -m caps spidering at 2 minutes.
+          cmd_options: '-j -m 2'
+          allow_issue_writing: false
+          fail_action: false
+          artifact_name: zap-baseline-${{ github.sha }}
+
+      - name: Publish the ZAP summary
+        if: always()
+        run: |
+          {
+            echo '### ZAP baseline (unauthenticated, report-only)'
+            echo ''
+            echo '| Format | Report | Available |'
+            echo '| --- | --- | --- |'
+            for report in report_json.json report_html.html report_md.md; do
+              available=no
+              [ ! -s "$report" ] || available=yes
+              printf '| %s | %s | %s |\n' "${report##*.}" "$report" "$available"
+            done
+            echo ''
+            echo 'Download all three reports from the zap-baseline artifact on this run. Findings do not block deployment.'
+            echo ''
+            if [ -f report_md.md ]; then
+              cat report_md.md
+            else
+              echo 'ZAP wrote no Markdown report; inspect the scan step.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

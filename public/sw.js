@@ -19,11 +19,9 @@ function isApiRequest(url) {
   );
 }
 
+// Media bytes are served only through /media/access/:token (or under /api).
 function isPrivateMediaRequest(url) {
-  return (
-    url.origin === self.location.origin &&
-    ['/media/', '/films/', '/clips/'].some((prefix) => url.pathname.startsWith(prefix))
-  );
+  return url.origin === self.location.origin && url.pathname.startsWith('/media/');
 }
 
 function isShellAsset(url) {

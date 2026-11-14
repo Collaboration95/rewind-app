@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { startCycleSchedulerLoop } from './cycles/scheduler';
 import { listAuditEvents, type AuditEvent } from './audit';
-import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
+import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig, mediaDir } from './config';
 import {
   backfillMediaIntegrity,
   bootstrapDatabase,
@@ -518,8 +518,8 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
   const workerOptions = {
     ...media.options,
     ffmpegBin: config.ffmpegBin,
-    stagingDir: resolve(config.dataDir, 'media', 'staging'),
-    outputDir: resolve(config.dataDir, 'media', 'processed'),
+    stagingDir: mediaDir(config, 'staging'),
+    outputDir: mediaDir(config, 'processed'),
     ...(groupId ? { groupId } : {}),
   };
   // Close the handle exactly once, whichever exit path is taken.
@@ -617,7 +617,7 @@ async function start(config: RuntimeConfig): Promise<void> {
   }
   let schedulerDatabase: ReturnType<typeof openDatabase>;
   try {
-    await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
+    await cleanupOrphanedStagedSources(database, mediaDir(config, 'staging'));
     schedulerDatabase = await openRuntimeDatabase(config);
   } catch (error) {
     media.close();
@@ -671,8 +671,8 @@ async function start(config: RuntimeConfig): Promise<void> {
     scheduler = startCycleSchedulerLoop(schedulerDatabase, {
       ...media.options,
       ffmpegBin: config.ffmpegBin,
-      stagingDir: resolve(config.dataDir, 'media', 'staging'),
-      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      stagingDir: mediaDir(config, 'staging'),
+      outputDir: mediaDir(config, 'processed'),
       onError: (category) => console.error('Cycle scheduler: ' + category),
     });
     void scheduler.done.catch(() => {
@@ -902,20 +902,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       // so reference revalidation and deletion share its writer transaction.
       const database = openOperationalDatabase(config, { readOnly: !apply });
       try {
-        const report = planProcessedMediaRetention(
-          database,
-          resolve(config.dataDir, 'media', 'processed'),
-          { limit },
-        );
+        const report = planProcessedMediaRetention(database, mediaDir(config, 'processed'), {
+          limit,
+        });
         printRetention(
           report,
           json,
           apply
-            ? applyProcessedMediaRetention(
-                database,
-                resolve(config.dataDir, 'media', 'processed'),
-                report,
-              )
+            ? applyProcessedMediaRetention(database, mediaDir(config, 'processed'), report)
             : undefined,
         );
       } finally {
@@ -930,19 +924,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       try {
         const report = planConsistencyRepair(
           database,
-          resolve(config.dataDir, 'media', 'processed'),
-          resolve(config.dataDir, 'media', 'staging'),
+          mediaDir(config, 'processed'),
+          mediaDir(config, 'staging'),
           { limit },
         );
         printConsistency(
           report,
           json,
           repair
-            ? applyConsistencyRepair(
-                database,
-                resolve(config.dataDir, 'media', 'processed'),
-                report,
-              )
+            ? applyConsistencyRepair(database, mediaDir(config, 'processed'), report)
             : undefined,
         );
       } finally {

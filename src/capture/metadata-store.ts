@@ -15,9 +15,7 @@ function isImageMetadata(value: unknown): value is ImageMetadata {
     typeof candidate.width === 'number' &&
     typeof candidate.height === 'number' &&
     typeof candidate.byteLength === 'number' &&
-    (candidate.source === 'camera' ||
-      candidate.source === 'demo-fixture' ||
-      candidate.source === 'file') &&
+    (candidate.source === 'camera' || candidate.source === 'file') &&
     !('uri' in candidate) &&
     !('previewUri' in candidate)
   );

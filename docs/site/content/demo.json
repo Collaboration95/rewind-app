@@ -1,0 +1,425 @@
+{
+  "title": "Demo script",
+  "lede": "A 13-minute demo plus 4 minutes of questions, on hosted dev with a local run as backup, with who drives, what to click, what to say, what to expect and what to do if it fails.",
+  "intro": [
+    "The older demo script (doc/planning/report/presentation/demo-script.md) was written for the Sprint 2 pilot and a headless Firefox test run. It is out of date: the Demo was removed, Cognito arrived, and hosted dev now uses PostgreSQL. This script uses the app as it is today.",
+    "Two facts shape the plan. First, a real cycle is 28 days, so a new film cannot be created live on hosted dev unless the host overrides the cycle length. We therefore show a pre-seeded released film on hosted dev, and a live rollover on a local run with 10-minute cycles. Second, the camera needs HTTPS on a phone, so phone capture is done on hosted dev; the laptop can use `localhost`."
+  ],
+  "sections": [
+    {
+      "id": "timeline",
+      "title": "The 13 minutes at a glance",
+      "summary": "Eight steps, four drivers. Each step shows one use case and one quality attribute.",
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Demo timeline (minutes)",
+          "steps": [
+            {
+              "label": "Sign in",
+              "sub": "0:00 · Member A",
+              "detail": "Developer sign-in on hosted dev; explain Cognito on release. Shows UC01 and security of access."
+            },
+            {
+              "label": "Group and invite",
+              "sub": "1:30 · Member A",
+              "detail": "Create a group, share the code, join on a second device. Shows UC02 and UC03."
+            },
+            {
+              "label": "Capture",
+              "sub": "3:00 · Member B",
+              "detail": "Photo and short video on the phone; sealed ledger, allowance, one correction. Shows UC04 to UC06 and privacy."
+            },
+            {
+              "label": "Chat",
+              "sub": "5:00 · Member D",
+              "detail": "Live message, reply and reaction across two devices; prompt and reminder settings. Shows UC09 to UC11."
+            },
+            {
+              "label": "Released film",
+              "sub": "6:30 · Member C",
+              "detail": "Watch a seeded film, save it, then show the media link expiring and an outsider denied. Shows UC12, UC13 and security.",
+              "accent": true
+            },
+            {
+              "label": "Live rollover",
+              "sub": "8:30 · Member C",
+              "detail": "On the local run a 10-minute cycle has just ended: the film appears and a new cycle starts. Shows UC07 and UC08."
+            },
+            {
+              "label": "Performance",
+              "sub": "9:30 · Member D",
+              "detail": "The scripted benchmark output: API percentiles and film build time."
+            },
+            {
+              "label": "Pipeline",
+              "sub": "11:00 · Member B",
+              "detail": "A green Quality run, its jobs, security scans and the automatic deploy. Shows maintainability.",
+              "accent": true
+            }
+          ]
+        }
+      ],
+      "tables": [
+        {
+          "columns": ["#", "Minutes", "Driver", "Use case / attribute", "Environment"],
+          "rows": [
+            ["1", "0:00 to 1:30", "Member A", "UC01 · security", "Hosted dev, laptop"],
+            [
+              "2",
+              "1:30 to 3:00",
+              "Member A",
+              "UC02, UC03 · usability",
+              "Hosted dev, laptop and phone"
+            ],
+            [
+              "3",
+              "3:00 to 5:00",
+              "Member B",
+              "UC04 to UC06 · privacy, usability",
+              "Hosted dev, phone"
+            ],
+            [
+              "4",
+              "5:00 to 6:30",
+              "Member D",
+              "UC09 to UC11 · usability",
+              "Hosted dev, two devices"
+            ],
+            ["5", "6:30 to 8:30", "Member C", "UC12, UC13 · security", "Hosted dev, seeded group"],
+            ["6", "8:30 to 9:30", "Member C", "UC07, UC08 · availability", "Local `make run`"],
+            ["7", "9:30 to 11:00", "Member D", "Performance", "Terminal output"],
+            ["8", "11:00 to 13:00", "Member B", "Maintainability, security scans", "GitHub Actions"]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Member A also acts as the narrator who keeps time and tells the room what is about to happen. The course guidelines ask to demonstrate significant use cases and some important quality attributes such as performance (scripted) and maintainability (run the pipeline). Scalability is not claimed; see [Submission and presentation](submission.html#demo-evidence)."
+      ],
+      "qa": [
+        {
+          "q": "Why not demonstrate everything live?",
+          "a": "Thirteen minutes is short, and a 28-day cycle cannot be shown live. We pick the flows that carry the design (sealed contributions, cycle rollover, private media) and show the rest through tests and the pipeline."
+        }
+      ]
+    },
+    {
+      "id": "checklist",
+      "title": "Pre-demo checklist",
+      "summary": "Do this the evening before and again 30 minutes before the slot.",
+      "tables": [
+        {
+          "columns": ["Area", "Check", "Done"],
+          "rows": [
+            [
+              "Accounts",
+              "Three Developer sign-in accounts on hosted dev: owner (Member A), member (Member B's phone), outsider (a third browser profile). Create them the day before; registration is rate limited to 5 attempts per 15 minutes per source. Same three on the local run.",
+              ""
+            ],
+            [
+              "Devices",
+              "Laptop with the projector; one iPhone or Android phone on hosted dev. Camera and microphone permission already granted on both. Phone has the app open and signed in. Notifications and other apps off.",
+              ""
+            ],
+            [
+              "Seeded group (hosted)",
+              "A group, for example 'Pilot', with at least three members and one or two released films in Archive, with a film that is a few minutes long. Both demo accounts are members. Check that it plays, and that 'Save film' works.",
+              ""
+            ],
+            [
+              "Cycle timing (local)",
+              "Start `make run` and create a local group about 12 minutes before step 6 (so its 10-minute cycle has ended when you open it). Add two or three contributions from two local accounts straight after creating it. Before you go on, confirm the first local group already shows a released film as your rehearsal proof.",
+              ""
+            ],
+            [
+              "Hosted health",
+              "Open the hosted dev URL (README.md) and its `/health` endpoint; the latest Deploy dev run on `dev` is green. Do not merge anything to `dev` in the hour before: it redeploys and may restart the server.",
+              ""
+            ],
+            [
+              "Sign-in options",
+              "Look at what the dev sign-in screen shows. Use Developer sign-in. Use Cognito only if it has been tried on the day.",
+              ""
+            ],
+            [
+              "Benchmark",
+              "Run `npm run server:build` once. Have `node scripts/measure-real-group-performance.mjs` ready in a terminal and a saved copy of a recent run to show if time is short. The run takes about two minutes and needs ffmpeg.",
+              ""
+            ],
+            [
+              "GitHub tabs",
+              "Tabs open: the latest Quality run on `dev`, Deploy dev, CodeQL and Release security runs, the repository Actions list. Logged in.",
+              ""
+            ],
+            [
+              "Network",
+              "Venue Wi-Fi tested; phone hotspot as a second path. HTTPS hosted dev needs no VPN. Keep the local run on the laptop so it does not depend on the network.",
+              ""
+            ],
+            [
+              "Recordings",
+              "A recorded screen capture of each step (about 30 seconds each), stored on the laptop, in case a step fails.",
+              ""
+            ],
+            [
+              "Test media",
+              "Use non-sensitive footage only. Prepare a 5-second video in the phone gallery in case the camera refuses.",
+              ""
+            ],
+            [
+              "Rehearsal",
+              "Two full timed runs with the real drivers. Record the actual time of each step on this page's table.",
+              ""
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        { "label": "README.md", "path": "README.md", "note": "Hosted dev URL and local run" },
+        {
+          "label": "scripts/run-real-local.mjs",
+          "path": "scripts/run-real-local.mjs",
+          "note": "Local runner: port 8090, 10-minute cycles"
+        },
+        { "label": "Makefile", "path": "Makefile", "note": "make run and make run-real" }
+      ],
+      "qa": [
+        {
+          "q": "What is the single biggest demo risk?",
+          "a": "Phone camera and permissions on a venue network. The mitigation is a pre-granted browser permission, a gallery fallback and a recording."
+        }
+      ]
+    },
+    {
+      "id": "steps-1-4",
+      "title": "Steps 1 to 4: access, capture and chat (0:00 to 6:30)",
+      "summary": "Sign in, create and join a group, add sealed contributions, chat across two devices.",
+      "tables": [
+        {
+          "columns": ["Step", "Do (click)", "Say", "Expected result", "If it fails"],
+          "rows": [
+            [
+              "1 · Sign in · A",
+              "Open hosted dev. Choose Developer sign-in; sign in as the owner.",
+              "'Release signs in through Amazon Cognito Managed Login with PKCE. Local and dev keep a password form so we and our tests can sign in without Cognito. The session is an opaque server-side token.' Quality: security.",
+              "Home with the group selector or empty state.",
+              "Open `localhost:8090` from `make run` and sign in there; continue with the local run."
+            ],
+            [
+              "2 · Group and invite · A",
+              "Tap New group, name it, create. Open Settings, Invite; show the code or link. On the phone choose 'Have an invite?', enter the code, tap Accept invitation.",
+              "'Groups hold 2 to 10 people. The invite expires in 24 hours by default and wrong guesses are throttled. The server checks capacity and duplicates in one transaction.'",
+              "Members list shows both accounts; the phone lands on the group.",
+              "Use the seeded group with both members and show only invite creation and revoke."
+            ],
+            [
+              "3 · Capture · B",
+              "On the phone tap the shutter, take a photo with the CCD look, submit. Then record a 5-second video, trim, submit. Open 'Your moments'.",
+              "'Contributions are sealed. You can see when and how long, not what. Five per week, 30 seconds, 15 per video, and one delete-and-replace. The server reserves the allowance atomically.' Quality: privacy.",
+              "Moments shows entries as 'sealed' with kind, length and day; allowance used; Delete visible once.",
+              "Pick a prepared video from the gallery (bounded browser fallback), or play the recording and describe the result."
+            ],
+            [
+              "3b · Correction · B",
+              "Delete the video and submit a new one.",
+              "'One correction: the deleted slot is returned and used once.'",
+              "Delete is no longer offered for the replacement.",
+              "Skip; mention the contribution policy tests."
+            ],
+            [
+              "4 · Chat · D",
+              "Open Chat on the laptop; send a message. On the phone reply to it and add the reaction. Open Settings, show prompt, time zone and reminder switch.",
+              "'Messages persist first, then fan out over server-sent events, so a reconnect catches up from a cursor. Reminders are web push on Sunday 19:00 in the group's time zone; they are opt-in with snooze.' Do not send a push now.",
+              "Message and reply appear on the other device without refresh; reaction shows.",
+              "Refresh the page to show persisted history; describe the live path from the architecture page."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Hosted dev creates new groups with the server's default cycle, 28 days, unless the host sets a shorter cycle. Do not promise a live film from this group."
+      ],
+      "sources": [
+        {
+          "label": "src/real/Moments.tsx",
+          "path": "src/real/Moments.tsx",
+          "note": "Sealed ledger wording"
+        },
+        {
+          "label": "src/real/Shell.tsx",
+          "path": "src/real/Shell.tsx",
+          "note": "Home, Chat, Archive tabs"
+        },
+        { "label": "src/real/settings/Invite.tsx", "path": "src/real/settings/Invite.tsx" },
+        { "label": "server/src/routes/chat-routes.ts", "path": "server/src/routes/chat-routes.ts" }
+      ],
+      "qa": [
+        {
+          "q": "Why can't I see my own clip while it is sealed?",
+          "a": "By design. Seeing it would invite re-takes and editing for an audience. The server whitelists metadata and gives no thumbnail or path."
+        },
+        {
+          "q": "What happens if the upload fails halfway?",
+          "a": "The reservation expires after 15 minutes and the allowance is not consumed until the contribution is accepted. The ledger shows the failed state with a retry."
+        }
+      ]
+    },
+    {
+      "id": "steps-5-6",
+      "title": "Steps 5 and 6: released film and rollover (6:30 to 9:30)",
+      "summary": "Watch a released film, prove the media link is private and short-lived, then show a cycle ending on its own.",
+      "tables": [
+        {
+          "columns": ["Step", "Do (click)", "Say", "Expected result", "If it fails"],
+          "rows": [
+            [
+              "5a · Archive · C",
+              "Switch to the seeded group. Open Archive. Play the film. Tap Save film.",
+              "'The film is compiled by FFmpeg: clips joined in time order at 720 by 1280, loudness normalised to about -16 LUFS, verified before it is published. It premieres for 24 hours and stays in Archive.'",
+              "Film plays with sound; download starts.",
+              "Play the recorded capture. Run `npm run test:focused -- server server/tests/film-compilation.test.mjs` to show the pipeline."
+            ],
+            [
+              "5b · Token expiry · C",
+              "In the browser developer tools Network tab copy the media URL (`/media/access/<token>`). Paste it into the outsider's browser profile: it is denied. Paste it again in the same session after two minutes (use the time while step 6 runs).",
+              "'The link is an opaque token valid for two minutes, tied to the session, the group, the job and the purpose. It contains no object path and no session token. Other sessions and other groups are denied with the same safe 403.' Quality: security.",
+              "Outsider: 401 or 403. Same session after expiry: not found or denied.",
+              "Show `server/tests/media-token-http-contract.test.mjs` and `media-capabilities.test.mjs` passing."
+            ],
+            [
+              "6 · Rollover · C",
+              "Switch to `localhost:8090`. Open the group created 12 minutes ago. Show the new film in Archive and the fresh cycle on Home. Show the server log line for the job.",
+              "'The scheduler scans every second. At the end time one persisted step closes the cycle, opens the next and queues the film job. A restart or a duplicate tick replays it safely.' Quality: availability.",
+              "Archive shows 'Your film is here'; Home shows a new, empty week.",
+              "Play the recording from the rehearsal. Explain with the cycle sequence on [Patterns](patterns.html)."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Copy the token at the very start of step 5, then come back to it at the end of step 6. Two minutes pass in between, so the expiry is shown without waiting."
+      ],
+      "sources": [
+        {
+          "label": "server/src/archive/capabilities.ts",
+          "path": "server/src/archive/capabilities.ts",
+          "note": "Two-minute capability"
+        },
+        {
+          "label": "server/src/routes/media-access.ts",
+          "path": "server/src/routes/media-access.ts"
+        },
+        { "label": "server/src/cycles/scheduler.ts", "path": "server/src/cycles/scheduler.ts" },
+        {
+          "label": "server/tests/media-token-http-contract.test.mjs",
+          "path": "server/tests/media-token-http-contract.test.mjs"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why capability tokens instead of signed S3 URLs for playback?",
+          "a": "The server must check membership and release state on every access, verify file integrity and apply a serving budget. A short opaque token keeps that logic in one place and keeps object paths hidden. Uploads use presigned URLs because there the server has already checked the reservation."
+        },
+        {
+          "q": "What if the server restarts during the two minutes?",
+          "a": "Tokens are in memory, so they are lost and the client simply asks for a new one. That is safe, but it means the design does not scale across several instances without shared state."
+        }
+      ]
+    },
+    {
+      "id": "steps-7-8",
+      "title": "Steps 7 and 8: performance and pipeline (9:30 to 13:00)",
+      "summary": "The scripted benchmark and a green CI run.",
+      "tables": [
+        {
+          "columns": ["Step", "Do (click)", "Say", "Expected result", "If it fails"],
+          "rows": [
+            [
+              "7 · Performance · D",
+              "Show the terminal. The benchmark was started at about 6:30 on the laptop (or show the saved output): `node scripts/measure-real-group-performance.mjs`. Point at the percentile table and the film row.",
+              "'Five members, 100 chat messages, 25 six-second clips. Four API operations, 100 samples each, three runs. In our 12 October run p95 was at most 9.7 ms against a 2-second target, with no errors. The 25-clip, 150-second film was ready in 9 seconds against a 10-minute target. This is local SQLite on one machine, not hosted; we do not claim hosted numbers.' Quality: performance.",
+              "Exit code 0 and no target misses.",
+              "Show doc/planning/performance/353-local-measurement.md and the saved output."
+            ],
+            [
+              "8a · Pipeline · B",
+              "In GitHub Actions open the latest Quality checks run on `dev`. Expand the jobs; open the coverage artefacts.",
+              "'Every PR must pass one aggregate check: format, lint, architecture rules, types, a dependency audit, root and IaC tests, the server suite on SQLite and on PostgreSQL 17, the frontend suite with a coverage gate, and a browser, PWA and accessibility job.' Quality: maintainability.",
+              "All jobs green; the gate job last.",
+              "Open the screenshot taken during rehearsal."
+            ],
+            [
+              "8b · Security and deploy · B",
+              "Open CodeQL, Release security (Trivy image and IaC scans) and Deploy dev for the same commit.",
+              "'Merging to dev deploys to hosted dev automatically. CodeQL and Trivy scan every change. Release is promoted from main by a reviewed PR.'",
+              "Green runs and a Deploy dev run for the same commit.",
+              "Use the Actions list page; do not trigger a new deploy."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "If the benchmark is started live, run it on a machine that is not busy: the 12 October run showed roughly twice the latency when other builds were running. It needs `npm run server:build` first. It accepts no arguments and uses a temporary local SQLite database and a loopback port; it does not touch hosted dev."
+      ],
+      "sources": [
+        {
+          "label": "scripts/measure-real-group-performance.mjs",
+          "path": "scripts/measure-real-group-performance.mjs"
+        },
+        {
+          "label": "doc/planning/performance/353-local-measurement.md",
+          "path": "doc/planning/performance/353-local-measurement.md",
+          "note": "Protocol, targets and the 12 Oct result"
+        },
+        { "label": ".github/workflows/quality.yml", "path": ".github/workflows/quality.yml" },
+        {
+          "label": ".github/workflows/release-security.yml",
+          "path": ".github/workflows/release-security.yml"
+        },
+        { "label": ".github/workflows/codeql.yml", "path": ".github/workflows/codeql.yml" }
+      ],
+      "qa": [
+        {
+          "q": "Can you show auto-scaling?",
+          "a": "No. Rewind runs on one host by design. We show bounded concurrency and rate limits instead and say what we would change to scale (shared state for tokens and realtime, a separate worker pool for film jobs)."
+        },
+        {
+          "q": "Is the performance run realistic?",
+          "a": "It is a fixed, repeatable workload with declared boundaries. It uses real FFmpeg compilation and real HTTP, but local SQLite and one machine. It catches regressions; it is not a capacity test."
+        }
+      ]
+    },
+    {
+      "id": "fallbacks",
+      "title": "Fallbacks and rules",
+      "summary": "Decide the order of fallbacks before you start, and never improvise a deploy on stage.",
+      "notes": [
+        "**First fallback: the local run.** `make run` starts the server with SQLite in `.local-data/real` and the web app on `http://localhost:8090`. Sign in with Developer sign-in. Plain HTTP works on `localhost` only, so use a browser on the same laptop, not the phone.",
+        "**Second fallback: recordings.** One short screen capture per step, recorded during the rehearsal. Say clearly that it is a recording.",
+        "**Third fallback: tests.** For security and film behaviour run one focused test: `npm run test:focused -- server server/tests/media-token-http-contract.test.mjs`. Do not run the whole suite on stage.",
+        "**Never** merge, push, deploy, change the cycle length of the host or send a push notification during the demo.",
+        "**Camera fails.** Use the gallery fallback for video or play the recording; say so.",
+        "**Hosted dev is slow or down.** Switch to the local run at once and say why. Do not debug on stage.",
+        "**Time is short.** Drop 3b, 8b and the chat reaction first. Never drop step 5 or step 8a."
+      ],
+      "sources": [
+        { "label": "Makefile", "path": "Makefile" },
+        {
+          "label": "docs/architecture/delivery-and-verification.md",
+          "path": "docs/architecture/delivery-and-verification.md",
+          "note": "How deploys are triggered and verified"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What do you say if a step fails on stage?",
+          "a": "Name it in one sentence, switch to the fallback and carry on: 'The venue network is slow, so here is the same step on the local run.' Questions about the failure are better answered in the Q&A than during the demo."
+        },
+        {
+          "q": "What are the first questions in the 4-minute Q&A?",
+          "a": "Likely: why sealed media; how you keep media private; what happens if the film job fails; why one host; what changed after the Demo was removed; how each member's work shows in the repository. Each has a model answer on the [Product](product.html), [Architecture](architecture.html), [Decisions](decisions.html) and [Owners](owners.html) pages."
+        }
+      ]
+    }
+  ]
+}

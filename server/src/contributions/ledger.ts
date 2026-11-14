@@ -1,5 +1,4 @@
 import type { RewindDatabase } from '../db';
-import { isPostgres } from '../postgres/runtime';
 import { cyclePhase } from '../cycles/engine';
 import { contributionQuotaWindow, MAX_CONTRIBUTION_COUNT, MAX_CONTRIBUTION_SECONDS } from './index';
 
@@ -105,8 +104,6 @@ export class ContributionLedgerQueryError extends Error {
 export const REPLACED_BY_COLUMN = 'replaced_by_contribution_id';
 export const LEDGER_INDEX_NAME = 'contributions_ledger_member_idx';
 
-const LEDGER_INDEX_COLUMNS = ['cycle_id', 'member_id', 'created_at', 'id'] as const;
-
 interface LedgerRow {
   contributionId?: unknown;
   jobId?: unknown;
@@ -130,67 +127,6 @@ interface LedgerCursor {
   state: LedgerState | null;
   createdAt: string;
   id: string;
-}
-
-function tableColumns(database: RewindDatabase, table: string): Set<string> {
-  return new Set(
-    (database.prepare(`PRAGMA table_info(${table})`).all() as { name?: unknown }[]).map((row) =>
-      String(row.name),
-    ),
-  );
-}
-
-function indexMatches(
-  database: RewindDatabase,
-  name: string,
-  unique: boolean,
-  columns: readonly string[],
-  table: string,
-): boolean {
-  const row = database
-    .prepare("SELECT sql, tbl_name AS tblName FROM sqlite_master WHERE type = 'index' AND name = ?")
-    .get(name) as { sql?: string | null; tblName?: unknown } | undefined;
-  if (!row || row.sql === null || row.sql === undefined) return false;
-  if (String(row.tblName ?? '') !== table) return false;
-  const declared = (
-    database.prepare(`PRAGMA index_info(${name})`).all() as { name?: unknown }[]
-  ).map((info) => String(info.name));
-  if (declared.length !== columns.length) return false;
-  if (!declared.every((column, position) => column === columns[position])) return false;
-  const entry = (
-    database.prepare(`PRAGMA index_list(${table})`).all() as { name?: unknown; unique?: unknown }[]
-  ).find((candidate) => String(candidate.name) === name);
-  return Boolean(Number(entry?.unique)) === unique;
-}
-
-/** True when the ledger's additive column and scope index are both present. */
-export function contributionLedgerSchemaReady(database: RewindDatabase): boolean {
-  // PostgreSQL starts from the complete baseline; repairs are SQLite-only.
-  if (isPostgres(database)) return true;
-  return (
-    tableColumns(database, 'contributions').has(REPLACED_BY_COLUMN) &&
-    indexMatches(database, LEDGER_INDEX_NAME, false, LEDGER_INDEX_COLUMNS, 'contributions')
-  );
-}
-
-/**
- * Apply the ledger schema repair-style so an interrupted upgrade converges on
- * the same shape as a fresh install. Exported for the ordered migration hook in
- * server/src/db.ts; this module never writes during normal request handling.
- */
-export function ensureContributionLedgerSchema(database: RewindDatabase): void {
-  if (isPostgres(database)) return;
-  if (!tableColumns(database, 'contributions').has(REPLACED_BY_COLUMN)) {
-    database.exec(
-      `ALTER TABLE contributions ADD COLUMN ${REPLACED_BY_COLUMN} TEXT REFERENCES contributions(id) ON DELETE SET NULL`,
-    );
-  }
-  if (!indexMatches(database, LEDGER_INDEX_NAME, false, LEDGER_INDEX_COLUMNS, 'contributions')) {
-    database.exec(`DROP INDEX IF EXISTS ${LEDGER_INDEX_NAME}`);
-    database.exec(
-      `CREATE INDEX ${LEDGER_INDEX_NAME} ON contributions (cycle_id, member_id, created_at, id)`,
-    );
-  }
 }
 
 function isLedgerState(value: string): value is LedgerState {

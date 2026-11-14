@@ -1,15 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { once } from 'node:events';
 import test from 'node:test';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
-const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 
 const NOW = new Date('2026-09-10T12:00:00.000Z');
 const DENIED = {
@@ -19,27 +14,16 @@ const DENIED = {
   message: 'You do not have access to this resource.',
 };
 
-async function withRuntime(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-ledger-api-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config, { seedNow: '2026-09-01T00:00:00.000Z' });
-  const server = createRuntimeServer(config, database, { now: () => NOW });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  try {
-    return await run({ baseUrl, database });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-ledger-api-',
+      env: { REWIND_PORT: '0', ...REAL_AUTH_ENV },
+      seedNow: '2026-09-01T00:00:00.000Z',
+      serverOptions: { now: () => NOW },
+    },
+    run,
+  );
 
 /** Sign in a real account bound to a fixture member; returns its auth headers. */
 async function createSession(database, memberId = 'demo-1', groupId = 'demo-group') {
@@ -121,7 +105,7 @@ function insertFixtures(database) {
 }
 
 test(
-  'migration 016 records readiness and repairs a malformed index after receipt',
+  'the ledger schema is part of readiness and a dropped ledger index is refused',
   { skip: sqliteOnly },
   async () => {
     await withRuntime(async ({ database }) => {
@@ -131,13 +115,6 @@ test(
         database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
         17,
       );
-      database.exec(`
-      DROP INDEX contributions_ledger_member_idx;
-      CREATE INDEX contributions_ledger_member_idx ON contributions (member_id);
-    `);
-      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
-      migrateDatabase(database);
-      assert.equal(schemaReadiness(database).ready, true);
       assert.deepEqual(
         database
           .prepare('PRAGMA index_info(contributions_ledger_member_idx)')
@@ -145,14 +122,6 @@ test(
           .map((row) => row.name),
         ['cycle_id', 'member_id', 'created_at', 'id'],
       );
-
-      database.exec(`
-      DROP INDEX contributions_ledger_member_idx;
-      ALTER TABLE contributions DROP COLUMN replaced_by_contribution_id;
-    `);
-      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
-      migrateDatabase(database);
-      assert.equal(schemaReadiness(database).ready, true);
       assert.equal(
         database
           .prepare('PRAGMA table_info(contributions)')
@@ -160,6 +129,12 @@ test(
           .some((row) => row.name === 'replaced_by_contribution_id'),
         true,
       );
+      // Since the migration squash a damaged schema is reported, not repaired.
+      database.exec('DROP INDEX contributions_ledger_member_idx');
+      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, [
+        'baseline:contributions_ledger_member_idx',
+      ]);
+      assert.throws(() => migrateDatabase(database), /pre-migration-squash/);
     });
   },
 );

@@ -6,6 +6,7 @@ import {
   photoContributionStatusForJob,
   RealAccountGroupExperience,
 } from '../src/groups/RealAccountGroupExperience';
+import { jsonResponse } from './mocks/fetch';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
@@ -25,10 +26,6 @@ jest.mock('../src/chat/native-event-source', () => ({
     return source;
   },
 }));
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
-}
 
 const persistedGroup = {
   group: { id: 'real-group-1', name: 'Saturday table', role: 'owner' as const, maxMembers: 2 },

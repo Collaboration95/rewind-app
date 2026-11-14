@@ -113,6 +113,11 @@ function startProxy() {
       if (!response.headersSent) response.writeHead(502).end('Upstream unavailable');
       else response.destroy();
     });
+    // A client that goes away (closed tab, reconnecting SSE stream) must
+    // release the upstream request, or the server keeps counting the stream.
+    response.once('close', () => {
+      if (!response.writableFinished) upstream.destroy();
+    });
     request.pipe(upstream);
   });
   // Metro's hot-reload WebSocket.

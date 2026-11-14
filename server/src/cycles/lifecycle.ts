@@ -454,6 +454,3 @@ export async function advanceCycleLifecycleWithStore(
       : undefined;
   return advanceCycleLifecycleVerified(database, { ...input, clock: () => now }, proof);
 }
-
-export const transitionCycleLifecycle = advanceCycleLifecycle;
-export const processCycleLifecycle = advanceCycleLifecycle;

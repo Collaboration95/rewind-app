@@ -292,8 +292,9 @@
       </p>
       <p>
         The diagram describes hosted architecture. At this source revision, dev PostgreSQL cutover
-        is enabled; release database cutover is disabled in Terraform. Release operational
-        completion remains in #230, #504 and #515. No cloud check was performed for this guide.
+        is enabled; release PostgreSQL is declared but its cutover is off in Terraform until the
+        <a href="../architecture/release-cutover.md">release cutover</a> completes. No cloud check
+        was performed for this guide.
       </p>
       <h2 id="l3"><span class="lvl">L3</span>Life of one contribution</h2>
       <div
@@ -375,7 +376,8 @@
           <tr>
             <td>SQL</td>
             <td>
-              <code>server/src/db.ts</code>, <code>server/src/postgres</code>,
+              <code>server/src/db.ts</code>, <code>server/src/schema.ts</code>,
+              <code>server/src/postgres</code>,
               <code>server/migrations</code>
             </td>
             <td>SQLite locally; synchronous PostgreSQL bridge and matching hosted migrations.</td>

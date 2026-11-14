@@ -8,6 +8,14 @@ project="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 mkdir -p "$repo/deploy" "$repo/infra/terraform/demo" "$repo/server/src" "$root/bin"
 cp "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)/deploy/release.py" "$repo/deploy/release.py"
 printf 'fixture\n' > "$repo/deploy/compose.yaml"
+# The release manifest reads the schema version from the real migration registry;
+# fail here if that file moves or its format changes (#581 broke this silently).
+python3 - "$project" <<'GUARD'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+path = re.search(r'migration_source = \(ROOT / "([^"]+)"\)', (root / "deploy/release.py").read_text()).group(1)
+assert re.findall(r"\{\s*version:\s*(\d+)\s*,\s*key:", (root / path).read_text()), f"release.py reads {path} but finds no migration versions"
+GUARD
 printf 'CONFIG_VERSION=fixture\n' > "$repo/deploy/rewind.env.example"
 cat > "$repo/infra/terraform/demo/cloud-init.sh" <<'BOOTSTRAP'
 #!/bin/sh
@@ -19,7 +27,7 @@ BOOTSTRAP
 for tool in operator-common.sh backup-manifest.sh database-maintenance.sh database-bootstrap.sh database-import.sh; do
   cp "$project/deploy/$tool" "$repo/deploy/$tool"
 done
-printf "{ version: 17, key: 'fixture' }\n" > "$repo/server/src/db.ts"
+printf "{ version: 17, key: 'fixture' }\n" > "$repo/server/src/schema.ts"
 git -C "$repo" init -q
 git -C "$repo" config user.name Fixture
 git -C "$repo" config user.email fixture@example.invalid

@@ -9,7 +9,7 @@ const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
 
 test(
-  'real invite and media migrations 020–024 apply once and participate in schema readiness',
+  'real invite and media schema (020–024) is recorded once and part of schema readiness',
   { skip: sqliteOnly },
   async () => {
     const dataDir = await mkdtemp(`${tmpdir()}/rewind-migration-chain-`);
@@ -82,15 +82,6 @@ test(
       assertInviteSchema();
       assert.equal(schemaReadiness(database).ready, true);
 
-      database.exec('DROP TRIGGER real_profile_media_actor_update;');
-      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, [
-        'real-media-profile-bridge-v1',
-      ]);
-      migrateDatabase(database);
-
-      assert.equal(schemaReadiness(database).ready, true);
-      assertChainReceipts();
-      assertInviteSchema();
       assert.equal(
         database
           .prepare(
@@ -103,13 +94,18 @@ test(
       );
       assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
 
+      // Since the migration squash a damaged schema is reported and refused.
+      database.exec('DROP TRIGGER real_profile_media_actor_update;');
+      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, [
+        'baseline:real_profile_media_actor_update',
+      ]);
+      assert.throws(() => migrateDatabase(database), /pre-migration-squash/);
       database.exec('DROP TABLE real_invite_guess_throttles;');
       assert.deepEqual(schemaReadiness(database).missingMigrationKeys, [
-        'real-invite-guess-throttles-v1',
+        'baseline:real_invite_guess_throttles',
+        'baseline:real_invite_guess_throttles_window_idx',
+        'baseline:real_profile_media_actor_update',
       ]);
-      migrateDatabase(database);
-      assert.equal(schemaReadiness(database).ready, true);
-      assertInviteSchema();
     } finally {
       database.close();
       await rm(dataDir, { recursive: true, force: true });
@@ -118,27 +114,14 @@ test(
 );
 
 test(
-  'moderation migration upgrades existing reports once and indexes every deletion lookup',
+  'moderation records keep reports when an account goes and index every deletion lookup',
   { skip: sqliteOnly },
   async () => {
     const { DatabaseSync } = await import('node:sqlite');
-    const { readFileSync } = await import('node:fs');
     const database = new DatabaseSync(':memory:');
     try {
+      database.exec('PRAGMA foreign_keys = ON;');
       migrateDatabase(database);
-      // Recreate exactly the pre-030 safety tables and receipts to exercise upgrade.
-      database.exec(
-        'DROP INDEX contributions_removed_by_account_idx; DROP TABLE content_reports; DROP TABLE member_reports; DROP TABLE account_blocks; DROP TABLE film_segments;',
-      );
-      database.exec(readFileSync('server/migrations/028-content-safety.sql', 'utf8'));
-      const oldMembers = readFileSync('server/migrations/029-member-reports.sql', 'utf8');
-      database.exec(oldMembers.slice(0, oldMembers.indexOf('ALTER TABLE contributions')));
-      database.exec(
-        oldMembers.slice(oldMembers.indexOf('CREATE TABLE IF NOT EXISTS film_segments')),
-      );
-      database.exec(
-        "DELETE FROM schema_migrations WHERE version = 30; DELETE FROM schema_migration_markers WHERE migration_key = 'moderation-records-v1';",
-      );
       const { createRealAccount } = await import('../dist/auth/index.js');
       const reporter = await createRealAccount(
         database,
@@ -154,7 +137,6 @@ test(
       );
       assert.equal(reporter.ok, true);
       assert.equal(target.ok, true);
-      // Real parent rows make the legacy copy pass the runner's FK check.
       database.exec(
         "INSERT INTO profiles VALUES ('migration-profile', 'Fixture', 'F', 1); INSERT INTO groups (id, name) VALUES ('migration-group', 'Fixture');",
       );

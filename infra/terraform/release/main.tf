@@ -28,9 +28,11 @@ resource "aws_lightsail_instance" "release" {
   name              = local.name
   availability_zone = "${var.region}a"
   blueprint_id      = "ubuntu_24_04"
-  bundle_id         = "micro_3_0"
-  ip_address_type   = "ipv4"
-  user_data         = file("${path.module}/../demo/cloud-init.sh")
+  # nano while release serves nothing; move to micro_3_0 before it runs the
+  # app (see demo/lightsail.tf). The static IP keeps the CloudFront origin.
+  bundle_id       = "nano_3_0"
+  ip_address_type = "ipv4"
+  user_data       = file("${path.module}/../demo/cloud-init.sh")
 
   lifecycle {
     ignore_changes = [user_data]

@@ -7,6 +7,14 @@ resource "aws_s3_bucket" "backups" {
   }
 }
 
+
+resource "aws_s3_bucket_logging" "backups" {
+  bucket        = aws_s3_bucket.backups.id
+  target_bucket = aws_s3_bucket.audit_logs.id
+  target_prefix = "access/backups/"
+  depends_on    = [aws_s3_bucket_policy.audit_logs]
+}
+
 resource "aws_s3_bucket_public_access_block" "backups" {
   bucket                  = aws_s3_bucket.backups.id
   block_public_acls       = true
@@ -152,6 +160,28 @@ data "aws_iam_policy_document" "cloudtrail_audit_bucket" {
       values   = ["arn:aws:cloudtrail:${var.aws_region}:${var.account_id}:trail/rewind-management-trail"]
     }
   }
+
+  statement {
+    sid    = "S3BackupAccessLogDelivery"
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["logging.s3.amazonaws.com"]
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.audit_logs.arn}/access/backups/*"]
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_s3_bucket.backups.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.account_id]
+    }
+  }
+
 }
 
 resource "aws_s3_bucket_policy" "audit_logs" {
@@ -161,6 +191,14 @@ resource "aws_s3_bucket_policy" "audit_logs" {
 
 resource "aws_s3_bucket_lifecycle_configuration" "audit_logs" {
   bucket = aws_s3_bucket.audit_logs.id
+
+  rule {
+    id     = "expire-backup-access-logs"
+    status = "Enabled"
+    filter { prefix = "access/" }
+    expiration { days = 30 }
+    noncurrent_version_expiration { noncurrent_days = 7 }
+  }
 
   rule {
     id     = "expire-cloudtrail-logs"

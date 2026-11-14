@@ -136,9 +136,3 @@ export function parseInviteLink(value: string, now = Date.now()): InviteLinkPars
 
   return { kind: 'valid', code, expiresAt, ...(groupId ? { groupId } : {}) };
 }
-
-export function inviteLinkErrorMessage(reason: 'malformed' | 'expired'): string {
-  return reason === 'expired'
-    ? 'This invitation link has expired. Ask the owner for a new link or enter an invite code.'
-    : 'This invitation link is invalid. Ask the owner for a new link or enter an invite code.';
-}

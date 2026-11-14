@@ -237,20 +237,3 @@ export class ChatUnreadOwner {
     for (const listener of [...this.listeners]) listener();
   }
 }
-
-export function chatConnectionLabel(state: ChatConnectionState): string {
-  switch (state) {
-    case 'connecting':
-      return 'Connecting…';
-    case 'connected':
-      return 'Connected';
-    case 'reconnecting':
-      return 'Reconnecting…';
-    case 'offline':
-      return 'Offline';
-    case 'denied':
-      return 'Not authorised';
-    case 'unavailable':
-      return 'Unavailable';
-  }
-}

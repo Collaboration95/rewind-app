@@ -30,9 +30,9 @@ An issue is Done when all four conditions hold:
    linking the PR.
 
 Screenshots, evidence comments or folders, completion notes, decision documents,
-second-machine or physical-device runs, repeated rehearsals, independent human
-acceptance, and Project-board reconciliation beyond setting Status are not
-required unless the issue itself makes them the deliverable.
+second-machine or physical-device runs, repeated rehearsals, and independent
+human acceptance are not required unless the issue itself makes them the
+deliverable.
 
 ## Verification tiers
 
@@ -94,18 +94,18 @@ An agent may process an ordered Markdown issue queue in one run. Use one branch
 and PR per issue or tightly related group, with one review-agent pass per PR.
 Apply the two-attempt rule per issue; record blockers in the queue and continue.
 Give each issue a short, fresh context brief. Do not load
-large plan or prompt files; see Frozen folders.
+large plan or prompt files.
 
 ## Project documentation and Scrum
 
-`doc/README.md` is the planning workspace entry point; current context,
-proposals, Sprint plans, and evidence live under `doc/planning/`. Do not use the
-retired top-level `planning/` path or separate planning repository for current
-scope or delivery decisions.
+`doc/README.md` is the documentation index. Product context, proposals, Sprint
+plans and project-conduct evidence live under `doc/planning/`; architecture,
+design models and domain contracts live under `docs/`. Do not use a separate
+planning repository for current scope or delivery decisions.
 
 Use zero-based names: Sprint 0 (foundation), Sprint 1 (13–26 Sep 2026), Sprint
-2 (27 Sep–10 Oct 2026), Sprint 3 (11–24 Oct 2026). Milestones and the active
-Project board use these names; do not call the 27 Sep–10 Oct period Sprint 3.
+2 (27 Sep–10 Oct 2026), Sprint 3 (11–24 Oct 2026). Milestones use these names;
+do not call the 27 Sep–10 Oct period Sprint 3.
 Hold Sprint Planning, Daily Scrum, Sprint Review, and Retrospective; capture
 resulting work or decisions as GitHub Issues.
 
@@ -144,18 +144,17 @@ three things only:
 
 ## Frozen folders
 
-Do not read, modify or generate anything in these unless the user names the
-folder or document explicitly:
+Do not read, modify or generate anything in this folder unless the user names
+the folder or document explicitly:
 
-- `doc/planning/report/`: the final report and presentation. It is worked on
-  only near the end of the project.
-- `doc/planning/archive/`: superseded plans, handoffs and long agent prompts.
+- `doc/planning/report/`: the final report and presentation sources. It is
+  worked on only near the end of the project.
 
 ## Workspace boundaries
 
 `rewind-v1` and `rewind-v1-source.zip` are archived; do not inspect, extract,
-modify, or use them. Top-level `src/` is retired; current source belongs in
-`rewind-app/`.
+modify, or use them. The parent workspace's top-level `src/` is retired; all
+current source belongs in `rewind-app/` (its own `src/` is the live client).
 
 ## Native iOS simulator verification
 

@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -696,16 +697,17 @@ test('three crashed receipt leases finish inspectably without an extra provider 
 });
 
 test(
-  'additive outbox migration repairs an interrupted empty schema without losing accounts',
+  // Since the migration squash a damaged schema is refused, not repaired.
+  'a database missing the outbox table is refused without losing accounts',
   { skip: sqliteOnly },
   async () => {
     await fixture(async (c) => {
       const accounts = c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n;
       c.db.exec('DROP TABLE reminder_outbox');
       c.db.close();
-      c.db = openFixtureDatabase(c.config);
+      assert.throws(() => openFixtureDatabase(c.config), /lacks baseline:reminder_outbox/);
+      c.db = new DatabaseSync(c.config.databasePath);
       assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n, accounts);
-      assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM reminder_outbox').get().n, 0);
       assert.equal(
         c.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 27').get().n,
         1,

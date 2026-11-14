@@ -6,7 +6,7 @@ import {
   recordChatUnreadEvent,
   type ChatUnreadScope,
   type ChatUnreadSnapshot,
-} from '../src/chat/unread';
+} from '../src/chat/unread-store';
 
 const scope: ChatUnreadScope = {
   sessionId: 'session-a',

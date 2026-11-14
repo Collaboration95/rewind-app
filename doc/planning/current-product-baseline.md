@@ -183,7 +183,7 @@ for managed sessions, supplies the provider logout path. Invalid/replayed/expire
 state, denied consent, invalid identity or exchange failure returns a safe sign-in
 failure. Developer password entry is enabled only by local/dev configuration;
 release rejects that configuration. Sources: [Cognito service](../../server/src/auth/cognito.ts),
-[HTTP auth handlers](../../server/src/http.ts), [auth configuration](../../server/src/config.ts),
+[HTTP auth handlers](../../server/src/routes/auth-routes.ts), [auth configuration](../../server/src/config.ts),
 [client provider](../../src/auth/RealAccountProvider.tsx).
 
 <a id="uc-create-group"></a>
@@ -235,7 +235,7 @@ Owner selects a library/custom prompt and valid IANA time zone in group Settings
 server validates and persists settings. Reminder scheduling uses that zone;
 changing it does not move contribution/cycle deadlines. Non-owner updates and
 invalid/oversize values fail. Sources: [settings](../../server/src/groups/settings.ts),
-[Settings UI](../../src/reminders/RealGroupSettings.tsx),
+[Settings UI](../../src/real/Settings.tsx),
 [schedule](../../server/src/reminders/schedule.ts).
 
 <a id="uc-contribute"></a>
@@ -253,8 +253,7 @@ does not grant pre-release playback/thumbnail access. This sealing boundary does
 not prohibit the member's local review **before** submission.
 
 If browser recording is unsupported or temporarily unavailable, supported web
-paths offer a bounded fallback: open the device camera sheet or “Choose a video
-file.” File selection accepts an MP4 up to 15 seconds with an audio track, keeps
+paths offer a bounded fallback: “Choose a video file.” File selection accepts an MP4 up to 15 seconds with an audio track, keeps
 file contributions labelled, and still requires server verification and quota
 checks. This is production capability, distinct from fixture injection and a
 general gallery-import product. Permission denial, interruption, invalid/oversize
@@ -308,7 +307,7 @@ published authorized entries and short-lived media access. Premiere ends after
 24 hours; published films continue in Archive, subject to account/content controls.
 Unpublished, empty or delayed releases show their state. Non-member, stale session,
 changed selection or invalid/unverified asset does not produce media access.
-Sources: [Archive UI](../../src/archive/ArchiveScreen.tsx),
+Sources: [Archive UI](../../src/real/Archive.tsx),
 [capabilities](../../server/src/archive/capabilities.ts), [HTTP](../../server/src/http.ts).
 
 <a id="uc-download"></a>
@@ -348,7 +347,7 @@ unsupported browser, missing iPhone Home Screen installation, invalid subscripti
 or provider failure leaves useful in-app status. Provider acceptance is not proof
 that a device displayed a notification. Native push adapter code is retained but
 not the active product path. Sources: [platform selection](../../src/reminders/push-platform.ts),
-[subscription UI](../../src/reminders/PrivateReminderSubscription.tsx),
+[subscription UI](../../src/real/Settings.tsx),
 [schedule](../../server/src/reminders/schedule.ts), [outbox](../../server/src/reminders/outbox.ts),
 [providers](../../server/src/reminders/providers.ts).
 
@@ -406,7 +405,7 @@ resolve, not evidence of a healthy deployment. Sources:
 | Privacy and access control            | Membership/session/selection checks, unpublished-media denial, bounded asset capabilities and output integrity. Specifications: `server/tests/real-archive.test.mjs`, `real-group-invites.test.mjs`, `cognito-auth.test.mjs`.                                                 | Fresh negative live S3/Cognito checks or independent security audit.                                                                                                     |
 | Reliability and data integrity        | Transactional quota/correction, persisted jobs, bounded retry, idempotent closure/publication, staged cleanup. Specifications: `contribution-policy.test.mjs`, `contribution-ledger.test.mjs`, `compilation-jobs.test.mjs`, `cycle-scheduler.test.mjs` under `server/tests/`. | Long-duration field operation, live fault/recovery or lossless environment rollback.                                                                                     |
 | Performance                           | Bounded media/quota and asynchronous processing. Proposal target remains metadata/chat API p95 below two seconds on five-user fixtures; compilation needs a stated fixture/output profile and bound.                                                                          | No current timing result. Earlier 180×320 film benchmark is not a 720p performance result.                                                                               |
-| Platform compatibility                | Shared Expo/React Native source; Android build profiles; web manifest/service worker; capability-based capture/push. Specifications: `tests/native-build.test.mjs`, `tests/capture-platform.test.ts`, `tests/private-reminder-subscription.test.tsx`.                         | A configured APK is not delivered/physically accepted. Fresh Android and iPhone Home Screen end-to-end journeys, HTTPS capture and displayed web push remain unverified. |
+| Platform compatibility                | Shared Expo/React Native source; Android build profiles; web manifest/service worker; capability-based capture/push. Specifications: `tests/native-build.test.mjs`, `tests/capture-platform.test.ts`, `tests/real-group-reminders.test.tsx`.                                  | A configured APK is not delivered/physically accepted. Fresh Android and iPhone Home Screen end-to-end journeys, HTTPS capture and displayed web push remain unverified. |
 | Usability and accessibility           | Explicit locked/delayed/empty states, allowance feedback, permission/error paths; accessibility/browser checks exist in `tests/responsive/`.                                                                                                                                  | No fresh pilot usability result, assistive-technology assessment or measured accessibility conformance.                                                                  |
 | Maintainability                       | Typed modules, policy/worker tests and architecture checks. Proposal's 70% application coverage is a target, not a result inferred from test presence.                                                                                                                        | Current test/coverage results are owned by the batch verification worker/CI, not established by this prose change.                                                       |
 | Observability and repeatable delivery | Safe operational signals, deployment workflows and versioned configuration; local disk and hosted S3 choices are explicit.                                                                                                                                                    | No AWS action, deployment or current environment configuration inspection was performed here.                                                                            |

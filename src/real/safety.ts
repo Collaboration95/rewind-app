@@ -2,14 +2,9 @@ import { Linking, Platform } from 'react-native';
 
 import { rateLimitMessage } from '../auth/real-account-client';
 import { getConfiguredInviteWebOrigin } from '../runtime/config';
+import { postJson } from './request';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
-
-const json = (body: object): RequestInit => ({
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-});
 
 export type ReportTarget =
   { messageId: string } | { contributionId: string } | { memberId: string };
@@ -23,14 +18,14 @@ export async function reportContent(
 ): Promise<void> {
   const response = await request(
     `/real/groups/${encodeURIComponent(groupId)}/reports`,
-    json({ ...target, reason }),
+    postJson({ ...target, reason }),
   );
   if (!response.ok)
     throw new Error(await rateLimitMessage(response, 'The report could not be sent. Try again.'));
 }
 
 export async function blockMember(request: Request, profileId: string): Promise<void> {
-  const response = await request('/real/blocks', json({ profileId }));
+  const response = await request('/real/blocks', postJson({ profileId }));
   if (!response.ok)
     throw new Error(
       await rateLimitMessage(response, 'That person could not be blocked. Try again.'),

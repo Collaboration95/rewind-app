@@ -5,8 +5,6 @@ audit_bucket_name       = "rewind-audit-logs-330599756236"
 # Optional. Leave empty when email notifications are not configured.
 budget_email_recipients = []
 ssh_cidr                = "YOUR.PUBLIC.IP.ADDRESS/32"
-# Leave null for manual starts. Example: "cron(0 9 ? * MON-FRI *)"
-automatic_start_schedule_expression = null
 # wake-demo.sh overrides this for reviewed host rebuild plans.
 demo_instance_enabled = true
 # Set only when enabling real-auth CloudFront. Generate a random value of at

@@ -1,6 +1,7 @@
 import type { RewindDatabase } from '../db';
 import { runWorkerTick, type WorkerOptions, type WorkerTickResult } from '../jobs/worker';
 import { advanceCycleLifecycleWithStore, publishCycleReleaseWithStore } from './lifecycle';
+import { isBusyError } from '../sqlite-busy';
 
 export const CYCLE_SCAN_DEFAULT_LIMIT = 16;
 export const CYCLE_SCAN_MAX_LIMIT = 100;
@@ -135,7 +136,7 @@ export function startCycleSchedulerLoop(
         options.onTick?.(tick);
       } catch (error) {
         failures += 1;
-        const busy = /SQLITE_BUSY|database is locked/i.test(String((error as Error)?.message));
+        const busy = isBusyError(error);
         options.onError?.(busy ? 'database_busy' : 'cycle_scheduler_failed');
         if (failures >= 3) throw new Error('cycle_scheduler_failed');
       }

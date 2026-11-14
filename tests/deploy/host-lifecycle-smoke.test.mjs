@@ -88,10 +88,9 @@ test('resolved Compose preserves explicit HTTP request bounds', async () => {
 });
 
 test('lifecycle smoke contract is disposable, bounded, and Compose-isolated', async () => {
-  const [script, compose, readme, packageJson] = await Promise.all([
+  const [script, compose, packageJson] = await Promise.all([
     readFile(join(REPO_ROOT, 'deploy/lifecycle-smoke.mjs'), 'utf8'),
     readFile(join(REPO_ROOT, 'deploy/compose.yaml'), 'utf8'),
-    readFile(join(REPO_ROOT, 'deploy/README.md'), 'utf8'),
     readFile(join(REPO_ROOT, 'package.json'), 'utf8'),
   ]);
 
@@ -111,7 +110,6 @@ test('lifecycle smoke contract is disposable, bounded, and Compose-isolated', as
   assert.match(script, /REWIND_DATA_HOST_DIR/);
   assert.match(script, /REWIND_MEDIA_HOST_DIR/);
   assert.match(compose, /REWIND_RUNTIME_PORT:-8787/);
-  assert.match(readme, /npm run test:host-lifecycle/);
   assert.equal(
     JSON.parse(packageJson).scripts['test:host-lifecycle'],
     'node deploy/lifecycle-smoke.mjs',

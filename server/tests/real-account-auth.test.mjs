@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import test from 'node:test';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { onPostgres } from './helpers/dialect.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabaseAt } = await import('../dist/db.js');
-const { createRuntimeServer, authClientSource, authTransportIsSecure } =
-  await import('../dist/http.js');
+const { authClientSource, authTransportIsSecure } = await import('../dist/http.js');
 const { createRealAccount, resetRealAccountPassword, revokeRealSession, validateRealSession } =
   await import('../dist/auth/index.js');
 
@@ -23,29 +20,15 @@ function syntheticSummary(database) {
   );
 }
 
-async function withRuntime(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-auth-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-    REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-  });
-  const database = openFixtureDatabase(config);
-  const serverOptions = { now: () => new Date('2026-09-28T00:00:00.000Z') };
-  const server = createRuntimeServer(config, database, serverOptions);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-  try {
-    return await run({ baseUrl, config, database, server, dataDir });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-real-auth-',
+      env: { REWIND_PORT: '0', REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true' },
+      serverOptions: { now: () => new Date('2026-09-28T00:00:00.000Z') },
+    },
+    run,
+  );
 
 async function postLogin(baseUrl, username, password, clientType = 'native', extraHeaders = {}) {
   return fetch(`${baseUrl}/auth/login`, {
@@ -154,7 +137,7 @@ async function raceLoginWithReset(databasePath, account, ordering, reset) {
   }
 }
 
-test('additive auth migration and account reset preserve synthetic fixture-group data', async () => {
+test('account creation, reset and reopening preserve synthetic fixture-group data', async () => {
   await withRuntime(async ({ database, dataDir }) => {
     const seeded = syntheticSummary(database);
     const first = await createRealAccount(
@@ -187,24 +170,17 @@ test('additive auth migration and account reset preserve synthetic fixture-group
     assert.equal(result.ok, true);
     assert.deepEqual(syntheticSummary(database), seeded);
 
-    // Reopening the persisted database applies no destructive rebuild and
-    // keeps the real-auth tables separate from the synthetic fixture records.
-    // (SQLite migration repair; PostgreSQL starts from its baseline.)
+    // Reopening the persisted database applies no rebuild and keeps the
+    // real-auth tables separate from the synthetic fixture records. (Since the
+    // migration squash an up-to-date SQLite database is left untouched.)
     if (onPostgres) return;
     const { DatabaseSync } = await import('node:sqlite');
     const { migrateDatabase } = await import('../dist/db.js');
     const reopened = new DatabaseSync(`${dataDir}/rewind.sqlite`);
     try {
-      reopened.exec(`DROP TABLE reminder_outbox;
-        DROP TABLE reminder_destinations;
-        DROP TABLE real_account_sessions;
-        DROP TABLE auth_login_throttles;
-        DROP TABLE real_accounts;
-        DELETE FROM schema_migration_markers WHERE migration_key = 'real-account-auth-v1';
-        DELETE FROM schema_migrations WHERE version = 18;`);
       migrateDatabase(reopened);
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM profiles').get().count, 5);
-      assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 0);
+      assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 2);
       assert.deepEqual(syntheticSummary(reopened), seeded);
     } finally {
       reopened.close();
@@ -596,6 +572,15 @@ test('session restore distinguishes a missing browser session from a revoked cre
     });
     assert.equal(revoked.status, 401);
     assert.equal((await revoked.json()).error, 'session_expired');
+
+    // A browser holding a stale session cookie learns once that it expired.
+    const staleCookie = await fetch(`${baseUrl}/auth/session`, {
+      headers: { Cookie: `__Host-rewind_session=${token}` },
+    });
+    assert.equal(staleCookie.status, 401);
+    assert.equal((await staleCookie.json()).error, 'session_expired');
+    // Intentionally changed: the stale cookie is now cleared (was: no Set-Cookie).
+    assert.match(staleCookie.headers.get('set-cookie'), /^__Host-rewind_session=;.*Max-Age=0/);
   });
 });
 

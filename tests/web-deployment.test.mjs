@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
+import { renderSecurityHeaders } from '../deploy/render-security-headers.mjs';
 import { apiTarget, createProductionWebServer } from '../scripts/production-web-proxy.mjs';
 
 const securityHeaders = await readFile(
@@ -234,7 +235,7 @@ test('switching full-chat and unread streams repeatedly closes both proxy upstre
 test('public legal pages resolve at extensionless paths without the SPA shell', async () => {
   assert.match(
     nginx,
-    /location ~ \^\/\(privacy\|support\|terms\)\$ \{\s*include \/etc\/nginx\/security-headers\.conf;\s*try_files \/\$1\.html =404;/,
+    /location ~ \^\/\(privacy\|support\|terms\)\$ \{\s*include \/tmp\/security-headers\.conf;\s*try_files \/\$1\.html =404;/,
   );
   for (const page of ['privacy', 'support', 'terms'])
     await access(new URL(`../public/${page}.html`, import.meta.url));
@@ -310,6 +311,18 @@ test(
       join(root, 'default.conf'),
       nginx.replace('server_name _;', 'server_name _;\n    proxy_read_timeout 200ms;'),
     );
+    await renderSecurityHeaders(
+      root,
+      new URL('../deploy/security-headers.conf', import.meta.url),
+      join(root, 'security-headers.conf'),
+    );
+    await writeFile(
+      join(root, 'security-headers.conf'),
+      (await readFile(join(root, 'security-headers.conf'), 'utf8')).replace(
+        '__UPLOAD_ORIGIN__',
+        '',
+      ),
+    );
     await writeFile(
       join(root, 'upstream.cjs'),
       `
@@ -358,8 +371,16 @@ test(
         '-v',
         `${join(root, 'default.conf')}:/etc/nginx/conf.d/default.conf:ro`,
         '-v',
-        `${new URL('../deploy/security-headers.conf', import.meta.url).pathname}:/etc/nginx/security-headers.conf:ro`,
+        `${join(root, 'security-headers.conf')}:/tmp/security-headers.conf:ro`,
+        '--tmpfs',
+        '/var/cache/nginx:rw,mode=1777,uid=101,gid=101',
+        '--tmpfs',
+        '/tmp:rw,mode=1777',
+        '--entrypoint',
+        'nginx',
         process.env.REWIND_NGINX_TEST_IMAGE,
+        '-g',
+        'daemon off;',
       );
       await docker('exec', web, 'nginx', '-t');
       const probe = async (path) =>
@@ -390,7 +411,18 @@ test(
         assert.equal(response.headers['cache-control'], 'no-store');
         assert.equal(response.headers['x-content-type-options'], 'nosniff');
         assert.equal(response.headers['x-frame-options'], 'DENY');
-        assert.equal(response.headers['content-security-policy'], "frame-ancestors 'none'");
+        assert.equal(
+          response.headers['content-security-policy'],
+          securityHeaders
+            .match(/add_header Content-Security-Policy "([^"]+)"/)[1]
+            .replace('__SCRIPT_HASHES__', '')
+            .replace('__UPLOAD_ORIGIN__', ''),
+        );
+        assert.equal(
+          response.headers['permissions-policy'],
+          'camera=(self), microphone=(self), geolocation=(), payment=(), usb=()',
+        );
+        assert.equal(response.headers['server'], 'nginx');
         assert.equal(response.headers['strict-transport-security'], 'max-age=31536000');
         if (path === '/api' || path.endsWith('upload-intents')) {
           assert.equal(response.body, body);
@@ -417,19 +449,30 @@ test('every nginx location includes the shared always-on security headers', () =
   const locations = [...nginx.matchAll(/location [^\n]+ \{([\s\S]*?)\n    \}/g)];
   assert.equal(locations.length, 7);
   for (const [, location] of locations) {
-    assert.match(location, /include \/etc\/nginx\/security-headers\.conf;/);
+    assert.match(location, /include \/tmp\/security-headers\.conf;/);
   }
   for (const [name, value] of [
     ['X-Content-Type-Options', 'nosniff'],
     ['Referrer-Policy', 'strict-origin-when-cross-origin'],
     ['X-Frame-Options', 'DENY'],
     ['Strict-Transport-Security', 'max-age=31536000'],
-    ['Content-Security-Policy', "frame-ancestors 'none'"],
+    ['Cross-Origin-Opener-Policy', 'same-origin'],
+    ['Cross-Origin-Resource-Policy', 'same-origin'],
+    ['Cross-Origin-Embedder-Policy', 'require-corp'],
   ])
     assert.ok(securityHeaders.includes(`add_header ${name} "${value}" always;`));
-  assert.match(securityHeaders, /Content-Security-Policy-Report-Only "default-src 'self';/);
+  assert.match(
+    securityHeaders,
+    /Content-Security-Policy "default-src 'self'; script-src 'self' __SCRIPT_HASHES__;/,
+  );
+  assert.match(
+    securityHeaders,
+    /frame-ancestors 'none'; form-action 'self'; worker-src 'self' blob:; manifest-src 'self'/,
+  );
+  assert.doesNotMatch(securityHeaders, /Content-Security-Policy-Report-Only/);
+  assert.match(nginx, /server_tokens off;/);
   assert.match(
     dockerfile,
-    /COPY deploy\/security-headers\.conf \/etc\/nginx\/security-headers\.conf/,
+    /COPY --from=build \/app\/security-headers\.conf \/etc\/nginx\/security-headers\.conf/,
   );
 });

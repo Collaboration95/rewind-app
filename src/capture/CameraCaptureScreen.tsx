@@ -4,7 +4,6 @@ import { CameraView } from 'expo-camera';
 import { AppState, Image, Platform, StyleSheet, Text, View } from 'react-native';
 
 import type { ContributionLedgerAllowance } from '../domain/contributions';
-import { getRevealEducationCopy, type RevealEducationState } from '../domain/reveal-education';
 import {
   CaptureFileLifecycleError,
   type CameraPlatform,
@@ -18,8 +17,8 @@ import {
   isCaptureReady,
   type CaptureState,
 } from './capture-state';
-import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } from './file-store';
-import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
+import { ExpoCaptureFileStore, WebCaptureFileStore } from './file-store';
+import { AsyncStorageImageMetadataStore } from './metadata-store';
 import { ExpoCameraPlatform, isCaptureCancelled } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
 import { DEFAULT_CAPTURE_MODE, type CaptureMode } from '../domain/video';
@@ -53,6 +52,8 @@ import {
 } from './camera-ui';
 import { userMessage } from '../domain/user-message';
 
+const FILE_FALLBACK_LABEL = 'Choose an image file';
+
 /** How the chosen retro look reaches the server for one photo. */
 export interface PhotoRetroLook {
   mode: CaptureMode;
@@ -68,10 +69,7 @@ export interface CameraCaptureScreenProps {
   metadataStore?: ImageMetadataStore;
   now?: () => Date;
   createCaptureId?: () => string;
-  onAccepted?: (
-    metadata: Awaited<ReturnType<StillImageCaptureSession['accept']>>['metadata'],
-  ) => void;
-  onSubmitPhoto?: (
+  onSubmitPhoto: (
     metadata: Awaited<ReturnType<StillImageCaptureSession['accept']>>['metadata'],
     base64: string,
     onProgress: (status: import('./contribution-status').ContributionStatus) => void,
@@ -79,12 +77,10 @@ export interface CameraCaptureScreenProps {
     look?: PhotoRetroLook,
   ) => Promise<import('./contribution-status').ContributionStatus>;
   onDeletePhotoContribution?: (contributionId: string) => Promise<void>;
-  onOpenArchive?: () => void;
   /** Close (×): back to the group. */
   onBack?: () => void;
   /** The Video tab of the mode switch. */
   onRecordClip?: () => void;
-  revealState?: RevealEducationState;
   /** This week's allowance from the group ledger, for the pill before any moment exists. */
   allowance?: ContributionLedgerAllowance | null;
 }
@@ -99,45 +95,27 @@ export function CameraCaptureScreen({
   groupName,
   metadataStore,
   now,
-  onAccepted,
   onSubmitPhoto,
   onDeletePhotoContribution,
-  onOpenArchive,
   onBack,
   onRecordClip,
   platform: platformProp,
   allowance: allowanceProp = null,
-  revealState = 'locked',
-}: CameraCaptureScreenProps = {}) {
+}: CameraCaptureScreenProps) {
   useAllowLandscape();
   const cameraRef = useRef<CameraView>(null);
-  const useSystemCamera = !onSubmitPhoto;
   const platform = useMemo(
-    () =>
-      platformProp ??
-      new ExpoCameraPlatform({
-        browserSystemCamera: useSystemCamera,
-        getCameraRef: () => cameraRef.current,
-      }),
-    [platformProp, useSystemCamera],
+    () => platformProp ?? new ExpoCameraPlatform({ getCameraRef: () => cameraRef.current }),
+    [platformProp],
   );
   const resolvedFileStore = useMemo(
     () =>
-      fileStore ??
-      (platform.kind === 'demo'
-        ? new InMemoryCaptureFileStore()
-        : Platform.OS === 'web'
-          ? new WebCaptureFileStore()
-          : new ExpoCaptureFileStore()),
-    [fileStore, platform.kind],
+      fileStore ?? (Platform.OS === 'web' ? new WebCaptureFileStore() : new ExpoCaptureFileStore()),
+    [fileStore],
   );
   const resolvedMetadataStore = useMemo(
-    () =>
-      metadataStore ??
-      (platform.kind === 'demo'
-        ? new InMemoryImageMetadataStore()
-        : new AsyncStorageImageMetadataStore()),
-    [metadataStore, platform.kind],
+    () => metadataStore ?? new AsyncStorageImageMetadataStore(),
+    [metadataStore],
   );
   const session = useMemo(
     () =>
@@ -328,18 +306,10 @@ export function CameraCaptureScreen({
     await captureImage(() => platform.captureStill(), true);
   }, [captureImage, platform]);
 
-  const retryCapture = useCallback(async () => {
-    await captureImage(() => platform.captureStill(), true);
-  }, [captureImage, platform]);
-
-  const useSyntheticStill = useCallback(async () => {
-    await captureImage(() => platform.captureStill(), false);
-  }, [captureImage, platform]);
-
   const pickStillFile = useCallback(async () => {
     if (!platform.pickStillFile) return;
-    // Wait for the chooser or camera sheet before entering the capturing
-    // state; closing it without a photo leaves the screen unchanged.
+    // Wait for the chooser before entering the capturing state; closing it
+    // without a photo leaves the screen unchanged.
     let picked: Awaited<ReturnType<NonNullable<typeof platform.pickStillFile>>>;
     try {
       picked = await platform.pickStillFile();
@@ -351,15 +321,7 @@ export function CameraCaptureScreen({
     await captureImage(() => Promise.resolve(picked), false);
   }, [captureImage, platform]);
 
-  const fallbackAction = platform.kind === 'demo' ? useSyntheticStill : pickStillFile;
-  const fallbackLabel =
-    platform.kind === 'demo'
-      ? 'Use synthetic still fixture'
-      : platform.fileFallbackIsCamera
-        ? 'Open camera'
-        : 'Choose an image file';
   const hasFileFallback = platform.supportsFileFallback === true && Boolean(platform.pickStillFile);
-  const hasFallback = platform.kind === 'demo' || hasFileFallback;
 
   const retake = useCallback(async () => {
     await session.retake();
@@ -372,36 +334,9 @@ export function CameraCaptureScreen({
     await refreshAccess();
   }, [refreshAccess, session]);
 
-  const discard = useCallback(async () => {
-    await session.discard();
-    setState((current) => ({
-      ...current,
-      status: 'checking',
-      activePreview: null,
-      errorMessage: null,
-    }));
-    await refreshAccess();
-  }, [refreshAccess, session]);
-
-  const accept = useCallback(async () => {
-    setState((current) => ({ ...current, status: 'saving', errorMessage: null }));
-    try {
-      const result = await session.accept();
-      setState((current) => ({ ...current, status: 'saved', errorMessage: null }));
-      onAccepted?.(result.metadata);
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        status: 'write-failed',
-        activePreview: null,
-        errorMessage: userMessage(error, 'The image could not be saved locally. Try again.'),
-      }));
-    }
-  }, [onAccepted, session]);
-
   const submitPhoto = useCallback(async () => {
     const active = session.getActivePreview();
-    if (!active || !onSubmitPhoto) return;
+    if (!active) return;
     if (
       active.metadata.byteLength > 10 * 1024 * 1024 ||
       active.metadata.width <= 0 ||
@@ -519,28 +454,18 @@ export function CameraCaptureScreen({
 
   const preview = state.activePreview;
   const capturing = state.status === 'capturing';
-  // Web opens the phone's own camera sheet, so the viewfinder has no live image.
-  const systemCamera = platform.fileFallbackIsCamera === true && hasFileFallback;
-  const viewfinder =
-    !preview &&
-    (state.status === 'ready' || capturing || (systemCamera && state.status === 'unsupported'));
+  const viewfinder = !preview && (state.status === 'ready' || capturing);
   const liveCamera = viewfinder && platform.supportsLivePreview && state.status !== 'unsupported';
   const allowance = contributionStatus?.allowance ?? allowanceProp;
   const left = allowanceLeft(allowance);
   // P1: a photo takes 3 s, so the shutter is off with less than that left.
   const photoBlocked = left !== null && left.seconds < PHOTO_SECONDS;
   const shutterDisabled =
-    photoBlocked || capturing || (!systemCamera && platform.supportsLivePreview && !cameraReady);
+    photoBlocked || capturing || (platform.supportsLivePreview && !cameraReady);
   const shoot = () => {
-    if (systemCamera) {
-      void pickStillFile();
-      return;
-    }
     setFlash((value) => value + 1);
     void capture();
   };
-  const revealCopy =
-    revealState !== 'locked' ? getRevealEducationCopy('capture', revealState) : null;
 
   return (
     <CameraFrame bokeh={!liveCamera && !preview} testID="camera-screen">
@@ -560,32 +485,16 @@ export function CameraCaptureScreen({
           />
         </LookPreview>
       ) : null}
-      {viewfinder && platform.kind === 'demo' ? (
-        <View accessibilityLabel="Simulator fixture viewfinder" style={styles.fixture}>
-          <Text style={styles.fixtureText}>READY FOR A FIXTURE PREVIEW</Text>
-        </View>
-      ) : null}
       {preview ? (
         <View style={StyleSheet.absoluteFill} testID="camera-preview-panel">
-          {platform.kind === 'demo' ? (
-            <View
-              accessibilityLabel="Simulator fixture still preview"
-              style={styles.fixture}
-              testID="camera-demo-preview"
-            >
-              <Text style={styles.fixtureText}>FIXTURE STILL</Text>
-              <Text style={styles.fixtureSub}>No physical image was captured</Text>
-            </View>
-          ) : (
-            <LookPreview fit="contain" mode={photoMode} testID="photo-review-look">
-              <Image
-                accessibilityLabel="Captured still preview"
-                resizeMode="contain"
-                source={{ uri: preview.uri }}
-                style={StyleSheet.absoluteFill}
-              />
-            </LookPreview>
-          )}
+          <LookPreview fit="contain" mode={photoMode} testID="photo-review-look">
+            <Image
+              accessibilityLabel="Captured still preview"
+              resizeMode="contain"
+              source={{ uri: preview.uri }}
+              style={StyleSheet.absoluteFill}
+            />
+          </LookPreview>
           <CamBottom>
             {preview.metadata.source === 'file' ? <Tag>Chosen from a file</Tag> : null}
             {photoSubmitPending ? (
@@ -602,48 +511,21 @@ export function CameraCaptureScreen({
               />
             ) : (
               <>
-                {onSubmitPhoto && state.status !== 'saved' ? (
-                  <LookPicker mode={photoMode} onChange={setPhotoMode} testID="camera-retro-look" />
-                ) : null}
-                {onSubmitPhoto ? (
-                  <Text style={styles.caption}>
-                    Counts as one moment · {PHOTO_SECONDS} s in the film
-                  </Text>
-                ) : null}
-                {state.status === 'saved' ? (
-                  <>
-                    <Notice alert={false}>Saved locally. Metadata only is retained.</Notice>
-                    <CamButton label="Take another still" onPress={() => void retake()} />
-                  </>
-                ) : (
-                  <>
-                    <ReviewActions>
-                      <CamButton
-                        label="Retake"
-                        onPress={() => void retake()}
-                        style={styles.retake}
-                      />
-                      <CamButton
-                        busy={state.status === 'saving'}
-                        icon={onSubmitPhoto ? 'lock' : undefined}
-                        label={
-                          onSubmitPhoto
-                            ? 'Seal'
-                            : state.status === 'saving'
-                              ? 'Saving…'
-                              : 'Use this still'
-                        }
-                        onPress={() => void (onSubmitPhoto ? submitPhoto() : accept())}
-                        primary
-                        style={styles.seal}
-                        testID="camera-seal"
-                      />
-                    </ReviewActions>
-                    {onSubmitPhoto ? null : (
-                      <CamButton height={44} label="Discard" onPress={() => void discard()} />
-                    )}
-                  </>
-                )}
+                <LookPicker mode={photoMode} onChange={setPhotoMode} testID="camera-retro-look" />
+                <Text style={styles.caption}>
+                  Counts as one moment · {PHOTO_SECONDS} s in the film
+                </Text>
+                <ReviewActions>
+                  <CamButton label="Retake" onPress={() => void retake()} style={styles.retake} />
+                  <CamButton
+                    icon="lock"
+                    label="Seal"
+                    onPress={() => void submitPhoto()}
+                    primary
+                    style={styles.seal}
+                    testID="camera-seal"
+                  />
+                </ReviewActions>
               </>
             )}
           </CamBottom>
@@ -655,21 +537,7 @@ export function CameraCaptureScreen({
         closeTestID="capture-back-to-group"
         groupName={groupName}
         onClose={onBack}
-      >
-        {platform.kind === 'demo' ? (
-          <View accessibilityLabel="Simulator demo capture, not a real camera" accessible>
-            <Tag>Simulator demo · fixture, not a real camera</Tag>
-          </View>
-        ) : null}
-        {revealCopy ? (
-          <View style={styles.reveal} testID={`capture-reveal-${revealState}`}>
-            <Notice alert={false}>{revealCopy.title}</Notice>
-            {onOpenArchive ? (
-              <CamButton height={44} label="Open Archive" onPress={onOpenArchive} />
-            ) : null}
-          </View>
-        ) : null}
-      </CamTop>
+      />
 
       {preview || viewfinder ? null : state.status === 'checking' ? (
         <CamCard
@@ -687,27 +555,29 @@ export function CameraCaptureScreen({
           title="Camera is temporarily unavailable"
         >
           <CamButton height={48} label="Check again" onPress={() => void refreshAccess()} soft />
-          {hasFallback ? (
-            <CamButton height={48} label={fallbackLabel} onPress={() => void fallbackAction()} />
+          {hasFileFallback ? (
+            <CamButton
+              height={48}
+              label={FILE_FALLBACK_LABEL}
+              onPress={() => void pickStillFile()}
+            />
           ) : null}
         </CamCard>
       ) : state.status === 'unsupported' ? (
         <CamCard
           body={
-            hasFallback
-              ? platform.kind === 'demo'
-                ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available instead.'
-                : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
+            hasFileFallback
+              ? 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
               : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
           }
           testID="camera-unsupported"
           title="Camera capture is not supported here"
         >
-          {hasFallback ? (
+          {hasFileFallback ? (
             <CamButton
               height={48}
-              label={fallbackLabel}
-              onPress={() => void fallbackAction()}
+              label={FILE_FALLBACK_LABEL}
+              onPress={() => void pickStillFile()}
               soft
             />
           ) : null}
@@ -742,7 +612,11 @@ export function CameraCaptureScreen({
             }
           />
           {hasFileFallback ? (
-            <CamButton height={48} label={fallbackLabel} onPress={() => void fallbackAction()} />
+            <CamButton
+              height={48}
+              label={FILE_FALLBACK_LABEL}
+              onPress={() => void pickStillFile()}
+            />
           ) : null}
         </CamCard>
       ) : state.status === 'capture-failed' || state.status === 'write-failed' ? (
@@ -754,14 +628,7 @@ export function CameraCaptureScreen({
           testID={state.status === 'write-failed' ? 'camera-write-failed' : 'camera-capture-failed'}
           title={state.status === 'write-failed' ? 'Local save failed' : 'Capture failed'}
         >
-          <CamButton
-            height={48}
-            label="Try again"
-            onPress={() =>
-              void (state.status === 'write-failed' ? refreshAccess() : retryCapture())
-            }
-            soft
-          />
+          <CamButton height={48} label="Try again" onPress={() => void refreshAccess()} soft />
         </CamCard>
       ) : null}
 
@@ -771,23 +638,17 @@ export function CameraCaptureScreen({
           <ModeSwitch mode="photo" onVideo={onRecordClip} videoTestID="camera-record-clip" />
           {viewfinder ? (
             <>
-              {onSubmitPhoto ? (
-                <LookPicker
-                  mode={photoMode}
-                  onChange={setPhotoMode}
-                  testID="photo-live-look-picker"
-                />
-              ) : null}
+              <LookPicker
+                mode={photoMode}
+                onChange={setPhotoMode}
+                testID="photo-live-look-picker"
+              />
               <ShutterRow
                 center={
                   <Shutter
                     busy={capturing}
                     disabled={shutterDisabled}
-                    hint={
-                      systemCamera
-                        ? 'Opens your phone camera; the photo comes back here for review'
-                        : 'Takes one still image and opens a preview'
-                    }
+                    hint="Takes one still image and opens a preview"
                     kind="photo"
                     label="Take photo"
                     onPress={shoot}
@@ -807,12 +668,8 @@ export function CameraCaptureScreen({
                 {photoBlocked
                   ? `A photo needs ${PHOTO_SECONDS} s; you have ${left.seconds} s left this week.`
                   : capturing
-                    ? systemCamera
-                      ? 'Preparing photo…'
-                      : 'Capturing…'
-                    : systemCamera
-                      ? 'Opens your phone camera'
-                      : ' '}
+                    ? 'Capturing…'
+                    : ' '}
               </Text>
             </>
           ) : null}
@@ -852,22 +709,6 @@ const styles = StyleSheet.create({
     top: 0,
     width: 1,
   },
-  fixture: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    gap: 8,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  fixtureText: {
-    color: 'rgba(255, 255, 255, 0.82)',
-    fontFamily: FONT.body,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  fixtureSub: { color: 'rgba(255, 255, 255, 0.82)', fontFamily: FONT.body, fontSize: 12 },
   caption: {
     color: 'rgba(255, 255, 255, 0.86)',
     fontFamily: FONT.body,
@@ -877,7 +718,6 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.6)',
     textShadowRadius: 6,
   },
-  reveal: { alignItems: 'center', gap: 8, marginTop: 4 },
   retake: { flex: 1 },
   seal: { flex: 1.6 },
 });

@@ -2,16 +2,13 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { existsSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { once } from 'node:events';
 import test from 'node:test';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { generateTestClip, REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 
 const serialTest = (name, fn) => test(name, { concurrency: false }, fn);
 
@@ -44,35 +41,23 @@ function controlledBody(firstChunk, finalChunk = Buffer.alloc(0)) {
   };
 }
 
-async function withRuntime(run, overrides = {}) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-http-limits-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    REWIND_HTTP_IDLE_TIMEOUT_MS: String(overrides.idleTimeoutMs ?? 250),
-    REWIND_HTTP_UPLOAD_TIMEOUT_MS: String(overrides.uploadTimeoutMs ?? 2_000),
-    REWIND_HTTP_MAX_CONCURRENT_INTAKES: String(overrides.maxConcurrentIntakes ?? 2),
-    REWIND_HTTP_MAX_CONCURRENT_PROCESSING: String(overrides.maxConcurrentProcessing ?? 1),
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  const server = createRuntimeServer(config, database, {
-    now: () => new Date('2026-09-10T12:00:00.000Z'),
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-  try {
-    return await run({ baseUrl, config, database, dataDir });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run, overrides = {}) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-http-limits-',
+      env: {
+        REWIND_PORT: '0',
+        REWIND_FFMPEG_BIN: 'ffmpeg',
+        REWIND_HTTP_IDLE_TIMEOUT_MS: String(overrides.idleTimeoutMs ?? 250),
+        REWIND_HTTP_UPLOAD_TIMEOUT_MS: String(overrides.uploadTimeoutMs ?? 2_000),
+        REWIND_HTTP_MAX_CONCURRENT_INTAKES: String(overrides.maxConcurrentIntakes ?? 2),
+        REWIND_HTTP_MAX_CONCURRENT_PROCESSING: String(overrides.maxConcurrentProcessing ?? 1),
+        ...REAL_AUTH_ENV,
+      },
+      serverOptions: { now: () => new Date('2026-09-10T12:00:00.000Z') },
+    },
+    run,
+  );
 
 /** A real account bound to fixture member demo-1; `headers` carries its bearer. */
 function createSession(database) {

@@ -1,13 +1,9 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import {
   CAPTURE_MODES,
   DEFAULT_CAPTURE_MODE,
   type CaptureMode,
   type RecordedClip,
 } from '../domain/video';
-
-export { CAPTURE_MODE_LABELS } from '../domain/video';
 
 export interface TrimBounds {
   startSeconds: number;
@@ -27,6 +23,7 @@ export interface PendingClipMetadataStore {
   clear(clipId: string): Promise<void>;
 }
 
+// Older builds persisted pending clip metadata here; reset still clears it.
 export const PENDING_CLIP_METADATA_KEY = '@rewind/pending-clip-metadata-v1';
 
 export type TrimValidation =
@@ -56,57 +53,6 @@ export function clampTrimmedPlaybackTime(
 ): number {
   if (!Number.isFinite(seconds)) return startSeconds;
   return Math.min(endSeconds, Math.max(startSeconds, seconds));
-}
-
-function isPendingMetadata(value: unknown): value is PendingClipMetadata {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<PendingClipMetadata>;
-  return (
-    typeof candidate.clipId === 'string' &&
-    typeof candidate.durationSeconds === 'number' &&
-    typeof candidate.startSeconds === 'number' &&
-    typeof candidate.endSeconds === 'number' &&
-    typeof candidate.createdAt === 'string' &&
-    CAPTURE_MODES.includes(candidate.mode as CaptureMode) &&
-    validateTrimBounds(candidate.startSeconds, candidate.endSeconds, candidate.durationSeconds).ok
-  );
-}
-
-export class AsyncStoragePendingClipMetadataStore implements PendingClipMetadataStore {
-  async save(metadata: PendingClipMetadata): Promise<void> {
-    const current = await this.read();
-    await AsyncStorage.setItem(
-      PENDING_CLIP_METADATA_KEY,
-      JSON.stringify({ ...current, [metadata.clipId]: metadata }),
-    );
-  }
-
-  async load(clipId: string): Promise<PendingClipMetadata | null> {
-    const current = await this.read();
-    const value = current[clipId];
-    return value ? { ...value } : null;
-  }
-
-  async clear(clipId: string): Promise<void> {
-    const current = await this.read();
-    delete current[clipId];
-    if (Object.keys(current).length === 0) await AsyncStorage.removeItem(PENDING_CLIP_METADATA_KEY);
-    else await AsyncStorage.setItem(PENDING_CLIP_METADATA_KEY, JSON.stringify(current));
-  }
-
-  private async read(): Promise<Record<string, PendingClipMetadata>> {
-    const raw = await AsyncStorage.getItem(PENDING_CLIP_METADATA_KEY);
-    if (!raw) return {};
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-      return Object.fromEntries(
-        Object.entries(parsed).filter(([, value]) => isPendingMetadata(value)),
-      ) as Record<string, PendingClipMetadata>;
-    } catch {
-      return {};
-    }
-  }
 }
 
 export class InMemoryPendingClipMetadataStore implements PendingClipMetadataStore {
