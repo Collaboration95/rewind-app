@@ -31,9 +31,12 @@ resource "aws_lightsail_instance" "rewind" {
   name              = local.instance_name
   availability_zone = "ap-southeast-1a"
   blueprint_id      = "ubuntu_24_04"
-  bundle_id         = "micro_3_0"
-  ip_address_type   = "ipv4"
-  user_data         = file("${path.module}/cloud-init.sh")
+  # nano_3_0 (512 MB, 20 GB, US$5/month): the runtime idles near 4% CPU and
+  # 150 MB RSS; cloud-init.sh adds swap for deploys. Changing the bundle
+  # replaces the host, but the static IP (and so the CloudFront origin) stays.
+  bundle_id       = "nano_3_0"
+  ip_address_type = "ipv4"
+  user_data       = file("${path.module}/cloud-init.sh")
 
   tags = {
     Environment = "demo"
