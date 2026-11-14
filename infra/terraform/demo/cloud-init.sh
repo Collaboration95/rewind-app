@@ -104,6 +104,22 @@ if [ "$SKIP_APT" != 1 ]; then
   fi
 fi
 
+# The host runs on Lightsail nano (512 MB). Swap absorbs deploy-time image
+# loads and backups, and idle desktop/storage daemons are not needed.
+if [ "$SKIP_APT" != 1 ]; then
+  SWAP_FILE=${REWIND_SWAP_FILE:-/swapfile}
+  if [ ! -f "$SWAP_FILE" ]; then
+    run_step 'allocate swap' fallocate -l "${REWIND_SWAP_MB:-1024}M" "$SWAP_FILE"
+    run_step 'protect swap' chmod 0600 "$SWAP_FILE"
+    run_step 'format swap' mkswap "$SWAP_FILE"
+  fi
+  swapon --show=NAME --noheadings | grep -qx "$SWAP_FILE" || run_step 'enable swap' swapon "$SWAP_FILE"
+  grep -q "^$SWAP_FILE " /etc/fstab || printf '%s none swap sw 0 0\n' "$SWAP_FILE" >> /etc/fstab
+  for unit in multipathd.socket multipathd.service ModemManager.service udisks2.service fwupd.service; do
+    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+  done
+fi
+
 for command_name in aws curl docker jq rsync sqlite3 usermod systemctl; do
   require_command "$command_name"
 done
