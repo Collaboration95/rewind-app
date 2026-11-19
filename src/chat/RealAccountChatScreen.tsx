@@ -47,12 +47,13 @@ function friendlyError(error: unknown): string {
 }
 
 const short = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  text.length > max ? `${text.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, '')}…` : text;
 
 function dayLabel(iso: string, now: number): string {
   const date = new Date(iso);
   const today = new Date(now);
-  const yesterday = new Date(now - 86_400_000);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
   if (date.toDateString() === today.toDateString()) return 'Today';
   if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
   return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
